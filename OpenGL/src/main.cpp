@@ -16,6 +16,7 @@
 #include "glm/gtc/matrix_transform.hpp"
 #include "imgui/imgui.h"
 #include "imgui/imgui_impl_glfw_gl3.h"
+#include "SmfModel.h"
 
 
 float aspectaxis() {
@@ -97,20 +98,20 @@ int main(void) {
 			3, 2, 6,
 			6, 7, 3
 		};
-
+		SmfModel smf("res/smf/cube.smf");
 		unsigned int vao; // vertex array buffer
 		GLFunc(glGenVertexArrays(1, &vao));
 		GLFunc(glBindVertexArray(vao));
 
 		VertexArray va;
-		VertexBuffer cube_vb(cube_vertices, 8 * 3 * sizeof(float));
+		VertexBuffer cube_vb(smf.GetPositions().positions, smf.GetPositions().size * sizeof(float));
 
 		VertexBufferLayout layout;
 		layout.Push<float>(3);
 		//layout.Push<float>(2);
 		va.AddBuffer(cube_vb, layout);
 
-		IndexBuffer ib(cube_elements, 36);
+		IndexBuffer ib(smf.GetFaces().faces, smf.GetFaces().count);
 		glm::vec3 translationA = glm::vec3(0, 0, 0);
 		glm::vec3 translationB = glm::vec3(0, 0, 0);
 		Shader shader("res/shaders/shader.shader");

@@ -5,11 +5,9 @@
 #include <string>
 #include <sstream>
 
-
 Shader::Shader(const std::string& filepath) : m_FilePath(filepath), m_RendererID(0) {
 	ShaderProgram source = ParseShader(filepath);
 	m_RendererID = CreateShader(source.VertexSource, source.FragmentSource);
-
 }
 Shader::~Shader() {
 	GLFunc(glDeleteProgram(m_RendererID));
