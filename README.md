@@ -31,3 +31,11 @@ f 1 2 6
 f 4 7 3
 f 4 8 7
 ```
+
+# To run Locally
+Open the solution in VS 2019. 
+Open the Property Manager by going to `View -> Other Windows -> Property Manager`
+Right click on the `OpenGL` project, and click `Add Existing Property Sheet`
+Locate the `PropertySheet.props` file found in the OpenGL project directory, and click open.
+
+You should now be able to run my project.
