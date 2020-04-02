@@ -98,7 +98,7 @@ int main(void) {
 			3, 2, 6,
 			6, 7, 3
 		};
-		SmfModel smf("res/smf/cube.smf");
+		SmfModel smf("res/smf/teapot.smf");
 		unsigned int vao; // vertex array buffer
 		GLFunc(glGenVertexArrays(1, &vao));
 		GLFunc(glBindVertexArray(vao));
@@ -112,8 +112,14 @@ int main(void) {
 		va.AddBuffer(cube_vb, layout);
 
 		IndexBuffer ib(smf.GetFaces().faces, smf.GetFaces().count);
+		// Transformation initialization
 		glm::vec3 translationA = glm::vec3(0, 0, 0);
 		glm::vec3 translationB = glm::vec3(0, 0, 0);
+		glm::vec3 rotationA = glm::vec3(0, 45, 0);
+		glm::vec3 axis_x(1, 0, 0);
+		glm::vec3 axis_y(0, 1, 0);
+		glm::vec3 axis_z(0, 0, 1);
+
 		Shader shader("res/shaders/shader.shader");
 
 		shader.Bind();
@@ -142,7 +148,10 @@ int main(void) {
 			glm::mat4 projection = glm::perspective(recalculatefov(), 1.0f * 1024 / 1024, 0.1f, 10.0f);
 			glm::mat4 model = glm::translate(glm::mat4(1.0f), translationA + glm::vec3(0, 0, -4));
 			glm::mat4 view = glm::lookAt(glm::vec3(0.0, 2.0, 0.0), glm::vec3(0.0, 0.0, -4.0), glm::vec3(0.0, 1.0, 0.0));
-			glm::mat4 mvp = projection * view * model;
+			glm::mat4 rotation = glm::rotate(glm::mat4(1.0f), glm::radians(rotationA.x), axis_x)
+								* glm::rotate(glm::mat4(1.0f), glm::radians(rotationA.y), axis_y)
+								* glm::rotate(glm::mat4(1.0f), glm::radians(rotationA.z), axis_z);
+			glm::mat4 mvp = projection * view * model * rotation;
 			shader.SetUniform4f("u_Color", r, 0.3f, 1.0f, 1.0f);
 			shader.SetUniformMat4f("u_MVP", mvp);
 
@@ -155,6 +164,7 @@ int main(void) {
 			r += increment;
 			{
 				ImGui::SliderFloat3("Translation", &translationA.x, -2.0f, 2.0f);
+				ImGui::SliderFloat3("Rotation angle", &rotationA.x, 0.0f, 360.0f);
 				//ImGui::SliderFloat3("Translation B", &translationB.x, 0.0f, 960.0f);
 				ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
 			}
