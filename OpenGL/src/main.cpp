@@ -66,56 +66,42 @@ int main(void) {
 	if (glewInit() != GLEW_OK)
 		std::cout << "Error: Glew did not init :(" << std::endl;
 	{
-		float cube_vertices[] = {
-			// front
-			-1.0, -1.0,  1.0,
-			 1.0, -1.0,  1.0,
-			 1.0,  1.0,  1.0,
-			-1.0,  1.0,  1.0,
-			// back
-			-1.0, -1.0, -1.0,
-			 1.0, -1.0, -1.0,
-			 1.0,  1.0, -1.0,
-			-1.0,  1.0, -1.0
-		};
-		unsigned int cube_elements[] = {
-			// front
-			0, 1, 2,
-			2, 3, 0,
-			// right
-			1, 5, 6,
-			6, 2, 1,
-			// back
-			7, 6, 5,
-			5, 4, 7,
-			// left
-			4, 0, 3,
-			3, 7, 4,
-			// bottom
-			4, 5, 1,
-			1, 0, 4,
-			// top
-			3, 2, 6,
-			6, 7, 3
-		};
 		SmfModel smf("res/smf/teapot.smf");
+		SmfModel smf2("res/smf/cube.smf");
+
 		unsigned int vao; // vertex array buffer
 		GLFunc(glGenVertexArrays(1, &vao));
 		GLFunc(glBindVertexArray(vao));
 
-		VertexArray va;
-		VertexBuffer cube_vb(smf.GetPositions().positions, smf.GetPositions().size * sizeof(float));
+		VertexArray va1;
+		VertexBuffer vb1(smf.GetPositions(), smf.GetPositionSize() * sizeof(float));
 
-		VertexBufferLayout layout;
-		layout.Push<float>(3);
+		VertexBufferLayout layout1;
+		layout1.Push<float>(3);
 		//layout.Push<float>(2);
-		va.AddBuffer(cube_vb, layout);
+		va1.AddBuffer(vb1, layout1);
 
-		IndexBuffer ib(smf.GetFaces().faces, smf.GetFaces().count);
+		IndexBuffer ib1(smf.GetFaces(), smf.GetFaceCount());
+		
+		// Object 2
+		VertexArray va2;
+		VertexBuffer vb2(smf2.GetPositions(), smf2.GetPositionSize() * sizeof(float));
+
+		VertexBufferLayout layout2;
+		layout2.Push<float>(3);
+		//layout.Push<float>(2);
+		va2.AddBuffer(vb2, layout2);
+
+		IndexBuffer ib2(smf2.GetFaces(), smf2.GetFaceCount());
+
 		// Transformation initialization
+		float scaleA = 1.0f;
+		float scaleB = 1.0f;
 		glm::vec3 translationA = glm::vec3(0, 0, 0);
-		glm::vec3 translationB = glm::vec3(0, 0, 0);
+		glm::vec3 translationB = glm::vec3(-1, 0, 0);
 		glm::vec3 rotationA = glm::vec3(0, 45, 0);
+		glm::vec3 rotationB = glm::vec3(0, 0, 0);
+		glm::vec3 init_scale = glm::vec3(1, 1, 1);
 		glm::vec3 axis_x(1, 0, 0);
 		glm::vec3 axis_y(0, 1, 0);
 		glm::vec3 axis_z(0, 0, 1);
@@ -144,18 +130,37 @@ int main(void) {
 			shader.Bind();
 			GLFunc(glEnable(GL_DEPTH_TEST));
 			GLFunc(glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT));
+			GLFunc(glDepthFunc(GL_LESS));
 
-			glm::mat4 projection = glm::perspective(recalculatefov(), 1.0f * 1024 / 1024, 0.1f, 10.0f);
+			glm::mat4 projection = glm::perspective(recalculatefov(), 1.0f * 1024 / 1024, 0.10f, 10.0f);
 			glm::mat4 model = glm::translate(glm::mat4(1.0f), translationA + glm::vec3(0, 0, -4));
-			glm::mat4 view = glm::lookAt(glm::vec3(0.0, 2.0, 0.0), glm::vec3(0.0, 0.0, -4.0), glm::vec3(0.0, 1.0, 0.0));
+			glm::mat4 view = glm::lookAt(glm::vec3(0.0, 0.0, 5.0), glm::vec3(0.0, 0.0, 0.0), glm::vec3(0.0, 1.0, 0.0));
 			glm::mat4 rotation = glm::rotate(glm::mat4(1.0f), glm::radians(rotationA.x), axis_x)
 								* glm::rotate(glm::mat4(1.0f), glm::radians(rotationA.y), axis_y)
 								* glm::rotate(glm::mat4(1.0f), glm::radians(rotationA.z), axis_z);
-			glm::mat4 mvp = projection * view * model * rotation;
-			shader.SetUniform4f("u_Color", r, 0.3f, 1.0f, 1.0f);
+			glm::mat4 scale = glm::scale(glm::mat4(1.0f), init_scale * scaleA);
+
+			glm::mat4 mvp = projection * view * model * rotation * scale;
+			shader.SetUniform4f("u_Color", 1.0f, 0.3f, 1.0f, 1.0f);
 			shader.SetUniformMat4f("u_MVP", mvp);
 
-			renderer.Draw(va, ib, shader);
+			renderer.Draw(va1, ib1, shader);
+			
+			// Render obj2
+			//glm::mat4 projection = glm::perspective(recalculatefov(), 1.0f * 1024 / 1024, 0.10f, 10.0f);
+			model = glm::translate(glm::mat4(1.0f), translationB + glm::vec3(0, 0, -4));
+			view = glm::lookAt(glm::vec3(0.0, 0.0, 5.0), glm::vec3(0.0, 0.0, 0.0), glm::vec3(0.0, 1.0, 0.0));
+			rotation = glm::rotate(glm::mat4(1.0f), glm::radians(rotationB.x), axis_x)
+				* glm::rotate(glm::mat4(1.0f), glm::radians(rotationB.y), axis_y)
+				* glm::rotate(glm::mat4(1.0f), glm::radians(rotationB.z), axis_z);
+			scale = glm::scale(glm::mat4(1.0f), init_scale * scaleB);
+
+			mvp = projection * view * model * rotation * scale;
+			shader.SetUniform4f("u_Color", 0.0f, 0.54f, 1.0f, 1.0f);
+			shader.SetUniformMat4f("u_MVP", mvp);
+
+			renderer.Draw(va2, ib2, shader);
+
 
 			if (r > 1.0f)
 				increment = -0.005f;
@@ -163,10 +168,14 @@ int main(void) {
 				increment = 0.005f;
 			r += increment;
 			{
-				ImGui::SliderFloat3("Translation", &translationA.x, -2.0f, 2.0f);
-				ImGui::SliderFloat3("Rotation angle", &rotationA.x, 0.0f, 360.0f);
+				ImGui::SliderFloat3("Translation A", &translationA.x, -10.0f, 10.0f);
+				ImGui::SliderFloat("Scale A", &scaleA, 0.0f, 2.0f);
+				ImGui::SliderFloat3("Rotation A angle", &rotationA.x, 0.0f, 360.0f);
 				//ImGui::SliderFloat3("Translation B", &translationB.x, 0.0f, 960.0f);
 				ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
+				ImGui::SliderFloat3("Translation B", &translationB.x, -10.0f, 10.0f);
+				ImGui::SliderFloat("Scale B", &scaleB, 0.0f, 2.0f);
+				ImGui::SliderFloat3("Rotation B angle", &rotationB.x, 0.0f, 360.0f);
 			}
 			ImGui::Render();
 			ImGui_ImplGlfwGL3_RenderDrawData(ImGui::GetDrawData());

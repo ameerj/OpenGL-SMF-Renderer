@@ -2,45 +2,40 @@
 #include <string>
 #include <vector>
 
-struct SMFPosition {
+struct Position {
 	float x;
 	float y;
 	float z;
 };
-struct SMFFace {
+struct Face {
 	int v0;
 	int v1;
 	int v2;
-};
-
-struct Positions {
-	unsigned int size;
-	float* positions;
-};
-
-struct Faces {
-	unsigned int count;
-	unsigned int* faces;
 };
 
 class SmfModel {
 private:
 	std::string m_FilePath;
 	std::string m_CurrentLine;
-	std::vector<SMFPosition> m_SMFPositions;
-	std::vector<SMFFace> m_SMFFaces;
+	std::vector<Position> m_Positions;
+	unsigned int m_PositionsSize;
+	std::vector<Face> m_Faces;
+	unsigned int m_FaceCount;
+
 public:
 	SmfModel(const std::string& filepath);
 	~SmfModel();
 
-	Positions GetPositions();
-	Faces GetFaces();
+	float* GetPositions();
+	unsigned int GetPositionSize();
+	unsigned int* GetFaces();
+	unsigned int GetFaceCount();
 private:
 	// Parse a line containing a vector
-	SMFPosition parsePosition(std::string line);
+	Position parsePosition(std::string line);
 
 	// Parse a line containing a face
-	SMFFace parseFace(std::string line);
+	Face parseFace(std::string line);
 
 	// Split string on space delimiter
 	std::vector<std::string> split_string(std::string line);

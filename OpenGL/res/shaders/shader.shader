@@ -2,14 +2,11 @@
 #version 330 core
 
 layout(location = 0) in vec4 position;
-//layout(location = 1) in vec2 texCoord;
 
-//out vec2 v_TexCoord;
 
 uniform mat4 u_MVP;
 
 void main(){
-	//v_TexCoord = texCoord;
 	gl_Position = u_MVP * position;
 };
 
@@ -18,12 +15,20 @@ void main(){
 
 layout(location = 0) out vec4 color;
 
-//in vec2 v_TexCoord;
 
 uniform vec4 u_Color;
-//uniform sampler2D u_Texture;
+
+float near = 0.1;
+float far = 10.0;
+
+float LinearizeDepth(float depth)
+{
+	float z = depth * 2.0 - 1.0; // back to NDC 
+	return (2.0 * near * far) / (far + near - z * (far - near));
+}
 
 void main(){
-	//vec4 texColor = texture(u_Texture, v_TexCoord);
-	color = u_Color;
+	//color = u_Color;
+	float depth = LinearizeDepth(gl_FragCoord.z) / far; // divide by far for demonstration
+	color = vec4(vec3(depth), 1.0) * u_Color;
 };
