@@ -18,14 +18,42 @@
 #include "imgui/imgui_impl_glfw_gl3.h"
 
 
-int main(void){
+float aspectaxis() {
+	int screen_width = 1024;
+	int screen_height = 1024;
+	float outputzoom = 1.0f;
+	float aspectorigin = 16.0f / 9.0f;
+	int aspectconstraint = 1;
+	switch (aspectconstraint)
+	{
+	case 1:
+		if ((screen_width / screen_height) < aspectorigin)
+			outputzoom *= ((screen_width / screen_height) / aspectorigin);
+		else
+			outputzoom *= (aspectorigin / aspectorigin);
+		break;
+	case 2:
+		outputzoom *= ((screen_width / screen_height) / aspectorigin);
+		break;
+	default:
+		outputzoom *= (aspectorigin / aspectorigin);
+	}
+	return outputzoom;
+}
+
+float recalculatefov() {
+	return 2.0f * glm::atan(glm::tan(glm::radians(45.0f / 2.0f)) / aspectaxis());
+}
+
+
+int main(void) {
 	GLFWwindow* window;
 	if (!glfwInit())
 		return -1;
 
 	/* Create a windowed mode window and its OpenGL context */
-	window = glfwCreateWindow(960, 540, "Hello World", NULL, NULL);
-	if (!window){
+	window = glfwCreateWindow(1024, 1024, "Hello World", NULL, NULL);
+	if (!window) {
 		glfwTerminate();
 		return -1;
 	}
@@ -37,25 +65,37 @@ int main(void){
 	if (glewInit() != GLEW_OK)
 		std::cout << "Error: Glew did not init :(" << std::endl;
 	{
-		/*
-		// updating to include texture coords
-		float positions[] = {
-			-50, -50,
-			50, -50,
-			50, 50,
-			-50, 50,
+		float cube_vertices[] = {
+			// front
+			-1.0, -1.0,  1.0,
+			 1.0, -1.0,  1.0,
+			 1.0,  1.0,  1.0,
+			-1.0,  1.0,  1.0,
+			// back
+			-1.0, -1.0, -1.0,
+			 1.0, -1.0, -1.0,
+			 1.0,  1.0, -1.0,
+			-1.0,  1.0, -1.0
 		};
-		*/
-
-		float positions[] = {
-			-50, -50, 0.0f, 0.0f,
-			50, -50, 1.0f, 0.0f,
-			50, 50, 1.0f, 1.0f,
-			-50, 50, 0.0f, 1.0f
-		};
-		unsigned int indices[] = {
+		unsigned int cube_elements[] = {
+			// front
 			0, 1, 2,
-			2, 3, 0
+			2, 3, 0,
+			// right
+			1, 5, 6,
+			6, 2, 1,
+			// back
+			7, 6, 5,
+			5, 4, 7,
+			// left
+			4, 0, 3,
+			3, 7, 4,
+			// bottom
+			4, 5, 1,
+			1, 0, 4,
+			// top
+			3, 2, 6,
+			6, 7, 3
 		};
 
 		unsigned int vao; // vertex array buffer
@@ -63,21 +103,16 @@ int main(void){
 		GLFunc(glBindVertexArray(vao));
 
 		VertexArray va;
-		VertexBuffer vb(positions, 4 * 2 * 2 * sizeof(float));
+		VertexBuffer cube_vb(cube_vertices, 8 * 3 * sizeof(float));
 
 		VertexBufferLayout layout;
-		layout.Push<float>(2);
-		layout.Push<float>(2);
-		va.AddBuffer(vb, layout);
+		layout.Push<float>(3);
+		//layout.Push<float>(2);
+		va.AddBuffer(cube_vb, layout);
 
-
-
-		IndexBuffer ib(indices, 6);
-
-		glm::mat4 proj = glm::ortho(0.0f, 960.0f, 0.0f, 540.0f, -1.0f, 1.0f);
-		glm::mat4 view = glm::translate(glm::mat4(1.0f), glm::vec3(0, 0, 0));
-		glm::vec3 translationA = glm::vec3(200, 200, 0);
-		glm::vec3 translationB = glm::vec3(400, 200, 0);
+		IndexBuffer ib(cube_elements, 36);
+		glm::vec3 translationA = glm::vec3(0, 0, 0);
+		glm::vec3 translationB = glm::vec3(0, 0, 0);
 		Shader shader("res/shaders/shader.shader");
 
 		shader.Bind();
@@ -89,28 +124,25 @@ int main(void){
 		// Setup style
 		ImGui::StyleColorsDark();
 
-		Texture texture("res/textures/icon.png");
-		texture.Bind(0);
-		shader.SetUniform1i("u_Texture", 0);
+		//Texture texture("res/textures/icon.png");
+		//texture.Bind(0);
+		//shader.SetUniform1i("u_Texture", 0);
+		GLFunc(glEnable(GL_DEPTH_TEST));
+		GLFunc(glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT));
 		float r = 0.2f;
 		float increment = 0.005f;
 		while (!glfwWindowShouldClose(window)) {
 			renderer.Clear();
 			ImGui_ImplGlfwGL3_NewFrame();
 			shader.Bind();
-			
-			// object A
-			glm::mat4 model = glm::translate(glm::mat4(1.0f), translationA);
-			glm::mat4 mvp = proj * view * model;
-			shader.SetUniform4f("u_Color", r, 0.3f, 1.0f, 1.0f);
-			shader.SetUniformMat4f("u_MVP", mvp);
+			GLFunc(glEnable(GL_DEPTH_TEST));
+			GLFunc(glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT));
 
-			renderer.Draw(va, ib, shader);
-			
-			// object B
-			model = glm::translate(glm::mat4(1.0f), translationB);
-			mvp = proj * view * model;
-			shader.SetUniform4f("u_Color", 0.0, r, 0.7f, 1.0f);
+			glm::mat4 projection = glm::perspective(recalculatefov(), 1.0f * 1024 / 1024, 0.1f, 10.0f);
+			glm::mat4 model = glm::translate(glm::mat4(1.0f), translationA + glm::vec3(0, 0, -4));
+			glm::mat4 view = glm::lookAt(glm::vec3(0.0, 2.0, 0.0), glm::vec3(0.0, 0.0, -4.0), glm::vec3(0.0, 1.0, 0.0));
+			glm::mat4 mvp = projection * view * model;
+			shader.SetUniform4f("u_Color", r, 0.3f, 1.0f, 1.0f);
 			shader.SetUniformMat4f("u_MVP", mvp);
 
 			renderer.Draw(va, ib, shader);
@@ -121,8 +153,8 @@ int main(void){
 				increment = 0.005f;
 			r += increment;
 			{
-				ImGui::SliderFloat3("Translation", &translationA.x, 0.0f, 960.0f);
-				ImGui::SliderFloat3("Translation B", &translationB.x, 0.0f, 960.0f);
+				ImGui::SliderFloat3("Translation", &translationA.x, -2.0f, 2.0f);
+				//ImGui::SliderFloat3("Translation B", &translationB.x, 0.0f, 960.0f);
 				ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
 			}
 			ImGui::Render();
