@@ -35,6 +35,12 @@ f 4 8 7
 # To run Locally
 Open the solution in VS 2019. 
 
+Press F5.
+
+
+
+If there are linking errors, try the following:
+
 Open the Property Manager by going to `View -> Other Windows -> Property Manager`
 
 Right click on the `OpenGL` project, and click `Add Existing Property Sheet`
