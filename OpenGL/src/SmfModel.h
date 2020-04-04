@@ -30,6 +30,8 @@ public:
 	unsigned int GetPositionSize();
 	unsigned int* GetFaces();
 	unsigned int GetFaceCount();
+
+	std::string GetModelName();
 private:
 	// Parse a line containing a vector
 	Position parsePosition(std::string line);
@@ -38,6 +40,6 @@ private:
 	Face parseFace(std::string line);
 
 	// Split string on space delimiter
-	std::vector<std::string> split_string(std::string line);
+	std::vector<std::string> split_string(std::string line, std::string delimiter);
 
 };
