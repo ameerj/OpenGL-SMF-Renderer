@@ -18,7 +18,6 @@
 #include "imgui/imgui_impl_glfw_gl3.h"
 #include "SmfModel.h"
 
-
 float aspectaxis() {
 	int screen_width = 1024;
 	int screen_height = 1024;
@@ -62,12 +61,11 @@ int main(void) {
 	/* Make the window's context current */
 	glfwMakeContextCurrent(window);
 	glfwSwapInterval(1);
-
 	if (glewInit() != GLEW_OK)
 		std::cout << "Error: Glew did not init :(" << std::endl;
 	{
 		SmfModel ModelA("res/smf/bunny_200.smf");
-		SmfModel ModelB("res/smf/teapot.smf");
+		SmfModel ModelB("res/smf/cube.smf");
 
 		unsigned int vao; // vertex array buffer
 		GLFunc(glGenVertexArrays(1, &vao));
@@ -100,11 +98,15 @@ int main(void) {
 
 		// Transformation initialization
 		float scaleA = 1.0f;
-		float scaleB = 0.35f;
+		glm::vec4 colorA(1.0f, 0.0f, 0.40f, 1.0f);
 		glm::vec3 translationA(0, 0, 0);
-		glm::vec3 translationB(-1, -1, 0);
 		glm::vec3 rotationA(0, 0, 0);
+
+		float scaleB = 0.75f;
+		glm::vec4 colorB(0.0f, 1.0f, 0.40f, 1.0f);
+		glm::vec3 translationB(-1, -1, 0);
 		glm::vec3 rotationB(0, 0, 0);
+
 		glm::vec3 init_scale(1, 1, 1);
 		glm::vec3 axis_x(1, 0, 0);
 		glm::vec3 axis_y(0, 1, 0);
@@ -113,7 +115,6 @@ int main(void) {
 		Shader shader("res/shaders/shader.shader");
 
 		shader.Bind();
-		shader.SetUniform4f("u_Color", 0.2f, 0.3f, 0.7f, 1.0f);
 
 		Renderer renderer;
 		ImGui::CreateContext();
@@ -121,13 +122,6 @@ int main(void) {
 		// Setup style
 		ImGui::StyleColorsDark();
 
-		//Texture texture("res/textures/icon.png");
-		//texture.Bind(0);
-		//shader.SetUniform1i("u_Texture", 0);
-		GLFunc(glEnable(GL_DEPTH_TEST));
-		GLFunc(glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT));
-		float r = 0.2f;
-		float increment = 0.005f;
 		while (!glfwWindowShouldClose(window)) {
 			renderer.Clear();
 			ImGui_ImplGlfwGL3_NewFrame();
@@ -147,7 +141,7 @@ int main(void) {
 			glm::mat4 scale = glm::scale(glm::mat4(1.0f), init_scale * scaleA);
 
 			glm::mat4 mvp = projection * view * model * rotation * scale;
-			shader.SetUniform4f("u_Color", 1.0f, 0.3f, 1.0f, 1.0f);
+			shader.SetUniform4f("u_Color", colorA.r, colorA.g, colorA.b, colorA.a);
 			shader.SetUniformMat4f("u_MVP", mvp);
 
 			renderer.Draw(va1, ib1, shader);
@@ -160,31 +154,43 @@ int main(void) {
 			scale = glm::scale(glm::mat4(1.0f), init_scale * scaleB);
 
 			mvp = projection * view * model * rotation * scale;
-			shader.SetUniform4f("u_Color", 0.0f, 0.54f, 1.0f, 1.0f);
+			shader.SetUniform4f("u_Color", colorB.r, colorB.g, colorB.b, colorB.a);
 			shader.SetUniformMat4f("u_MVP", mvp);
 
 			renderer.Draw(va2, ib2, shader);
-
-
-			if (r > 1.0f)
-				increment = -0.005f;
-			else if (r < 0.3f)
-				increment = 0.005f;
-			r += increment;
 			{
-				ImGui::Text("Camera");
-				ImGui::SliderFloat3("Camera Position", &camera.x, -10.0f, 10.0f);
-				ImGui::SliderFloat("Camera FOV", &angle, 0.0f, 180.0f);
+				if (ImGui::CollapsingHeader("Camera")){
+					ImGui::Text("Camera");
+					ImGui::SliderFloat3("Camera Position", &camera.x, -4.0f, 4.0f);
+					ImGui::SliderFloat("Camera FOV", &angle, 0.0f, 180.0f);
+					if (ImGui::Button("Reset Camera")) {
+						camera = glm::vec3(0.0, 0.0, 3.0);
+						angle = 60.0f;
+					}
+				}
 
-				ImGui::Text(ModelA.GetModelName().c_str());
-				ImGui::SliderFloat3("Translation A", &translationA.x, -10.0f, 10.0f);
-				ImGui::SliderFloat3("Rotation Angle A", &rotationA.x, 0.0f, 360.0f);
-				ImGui::SliderFloat("Scale A", &scaleA, 0.0f, 2.0f);
-
-				ImGui::Text(ModelB.GetModelName().c_str());
-				ImGui::SliderFloat3("Translation B", &translationB.x, -10.0f, 10.0f);
-				ImGui::SliderFloat3("Rotation Angle B", &rotationB.x, 0.0f, 360.0f);
-				ImGui::SliderFloat("Scale B", &scaleB, 0.0f, 2.0f);
+				if (ImGui::CollapsingHeader(ModelA.GetModelName().c_str())) {
+					ImGui::SliderFloat4("Color A", &colorA.r, 0.0f, 1.0f);
+					ImGui::SliderFloat3("Translation A", &translationA.x, -4.0f, 4.0f);
+					ImGui::SliderFloat3("Rotation Angle A", &rotationA.x, 0.0f, 360.0f);
+					ImGui::SliderFloat("Scale A", &scaleA, 0.0f, 2.0f);
+					if (ImGui::Button("Reset A")) {
+						scaleA = 1.0f;
+						translationA = glm::vec3(0, 0, 0);
+						rotationA = glm::vec3(0, 0, 0);
+					}
+				}
+				if (ImGui::CollapsingHeader(ModelB.GetModelName().c_str())) {
+					ImGui::SliderFloat4("Color B", &colorB.r, 0.0f, 1.0f);
+					ImGui::SliderFloat3("Translation B", &translationB.x, -4.0f, 4.0f);
+					ImGui::SliderFloat3("Rotation Angle B", &rotationB.x, 0.0f, 360.0f);
+					ImGui::SliderFloat("Scale B", &scaleB, 0.0f, 2.0f);
+					if (ImGui::Button("Reset B")) {
+						scaleB = 0.75f;
+						translationB = glm::vec3(-1, -1, 0);
+						rotationB = glm::vec3(0, 0, 0);
+					}
+				}
 
 			}
 			ImGui::Render();
