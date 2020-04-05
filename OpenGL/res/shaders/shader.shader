@@ -18,8 +18,8 @@ layout(location = 0) out vec4 color;
 
 uniform vec4 u_Color;
 
-float near = 0.1;
-float far = 10.0;
+float near = -1.0;
+float far = 1.0;
 
 float LinearizeDepth(float depth)
 {
@@ -30,5 +30,5 @@ float LinearizeDepth(float depth)
 void main(){
 	//color = u_Color;
 	float depth = LinearizeDepth(gl_FragCoord.z) / far; // divide by far for demonstration
-	color = vec4(vec3(depth), 1.0) * u_Color;
+	color =  u_Color;
 };
