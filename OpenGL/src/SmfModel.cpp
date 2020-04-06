@@ -18,7 +18,8 @@ std::vector<std::string> SmfModel::split_string (std::string line, std::string d
 	return tokens;
 }
 
-SmfModel::SmfModel(const std::string& filepath) : m_FilePath(filepath) {
+SmfModel::SmfModel(const std::string& filepath, float scale, glm::vec4 color, glm::vec3 translation, glm::vec3 rotation)
+	: m_FilePath(filepath), scale(scale), color(color), translation(translation), rotation(rotation) {
 	std::ifstream stream(filepath);
 	std::string line;
 
@@ -31,6 +32,7 @@ SmfModel::SmfModel(const std::string& filepath) : m_FilePath(filepath) {
 	m_PositionsSize = m_Positions.size() * 3;
 	m_FaceCount = m_Faces.size() * 3;
 }
+
 
 SmfModel::~SmfModel(){
 

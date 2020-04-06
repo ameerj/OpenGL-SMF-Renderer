@@ -45,6 +45,22 @@ float recalculatefov(float view_angle) {
 	return 2.0f * glm::atan(glm::tan(glm::radians(view_angle / 2.0f)) / aspectaxis());
 }
 
+glm::mat4 get_MRS(SmfModel smf_model) {
+	glm::vec3 init_scale(1, 1, 1);
+	glm::vec3 axis_x(1, 0, 0);
+	glm::vec3 axis_y(0, 1, 0);
+	glm::vec3 axis_z(0, 0, 1);
+
+	glm::mat4 model = glm::translate(glm::mat4(1.0f), smf_model.translation + glm::vec3(0, 0, 0));
+	glm::mat4 rotation = glm::rotate(glm::mat4(1.0f), glm::radians(smf_model.rotation.x), axis_x)
+		* glm::rotate(glm::mat4(1.0f), glm::radians(smf_model.rotation.y), axis_y)
+		* glm::rotate(glm::mat4(1.0f), glm::radians(smf_model.rotation.z), axis_z);
+	glm::mat4 scale = glm::scale(glm::mat4(1.0f), init_scale * smf_model.scale);
+
+	glm::mat4 mrs = model * rotation * scale;
+
+	return mrs;
+}
 
 int main(void) {
 	GLFWwindow* window;
@@ -64,37 +80,44 @@ int main(void) {
 	if (glewInit() != GLEW_OK)
 		std::cout << "Error: Glew did not init :(" << std::endl;
 	{
-		SmfModel ModelA("res/smf/bunny_200.smf");
-		SmfModel ModelB("res/smf/cube.smf");
-		SmfModel sphere("res/smf/sphere.smf"); // sphere, 0.5 radius, centered at origin
+		SmfModel modelA("res/smf/bunny_200.smf", 1.0f, 
+			glm::vec4(1.0f, 0.0f, 0.40f, 1.0f), 
+			glm::vec3(0, 0, 0)
+		);
+
+		SmfModel modelB("res/smf/cube.smf", 0.75f, 
+			glm::vec4(0.0f, 1.0f, 0.40f, 1.0f), 
+			glm::vec3(-1, -1, 0)
+		);
+		SmfModel sphere("res/smf/sphere.smf", 1.0f, 
+			glm::vec4(1.0f, 1.0f, 1.0f, 1.0f),
+			glm::vec3(1, 0, 0)
+		); // sphere, 0.5 radius, centered at origin
 
 		unsigned int vao; // vertex array buffer
 		GLFunc(glGenVertexArrays(1, &vao));
 		GLFunc(glBindVertexArray(vao));
 
 		VertexArray va1;
-		VertexBuffer vb1(ModelA.GetPositions(), ModelA.GetPositionSize() * sizeof(float));
+		VertexBuffer vb1(modelA.GetPositions(), modelA.GetPositionSize() * sizeof(float));
 		VertexBufferLayout layout1;
 		layout1.Push<float>(3);
-		//layout.Push<float>(2);
 		va1.AddBuffer(vb1, layout1);
-		IndexBuffer ib1(ModelA.GetFaces(), ModelA.GetFaceCount());
+		IndexBuffer ib1(modelA.GetFaces(), modelA.GetFaceCount());
 		
 		// Object 2
 		VertexArray va2;
-		VertexBuffer vb2(ModelB.GetPositions(), ModelB.GetPositionSize() * sizeof(float));
+		VertexBuffer vb2(modelB.GetPositions(), modelB.GetPositionSize() * sizeof(float));
 		VertexBufferLayout layout2;
 		layout2.Push<float>(3);
-		//layout.Push<float>(2);
 		va2.AddBuffer(vb2, layout2);
-		IndexBuffer ib2(ModelB.GetFaces(), ModelB.GetFaceCount());
+		IndexBuffer ib2(modelB.GetFaces(), modelB.GetFaceCount());
 
 		// Object  sphere
 		VertexArray vas;
 		VertexBuffer vbs(sphere.GetPositions(), sphere.GetPositionSize() * sizeof(float));
 		VertexBufferLayout layout_s;
 		layout_s.Push<float>(3);
-		//layout.Push<float>(2);
 		vas.AddBuffer(vbs, layout_s);
 		IndexBuffer ibs(sphere.GetFaces(), sphere.GetFaceCount());
 
@@ -102,35 +125,10 @@ int main(void) {
 		float angle = 60.0f;
 		glm::vec3 camera(0.0, 0.0, 3.0);
 
-		// Transformation initialization
-		float scaleA = 1.0f;
-		glm::vec4 colorA(1.0f, 0.0f, 0.40f, 1.0f);
-		glm::vec3 translationA(0, 0, 0);
-		glm::vec3 rotationA(0, 0, 0);
-
-		float scaleB = 0.75f;
-		glm::vec4 colorB(0.0f, 1.0f, 0.40f, 1.0f);
-		glm::vec3 translationB(-1, -1, 0);
-		glm::vec3 rotationB(0, 0, 0);
-
-		float scaleS = 1.0f;
-		glm::vec4 colorS(1.0f, 1.0f, 1.0f, 1.0f);
-		glm::vec3 translationS(1, 0, 0);
-		glm::vec3 rotationS(0, 0, 0);
-
-		glm::vec3 init_scale(1, 1, 1);
-		glm::vec3 axis_x(1, 0, 0);
-		glm::vec3 axis_y(0, 1, 0);
-		glm::vec3 axis_z(0, 0, 1);
-
 		Shader shader("res/shaders/shader.shader");
-
-		shader.Bind();
-
 		Renderer renderer;
 		ImGui::CreateContext();
 		ImGui_ImplGlfwGL3_Init(window, true);
-		// Setup style
 		ImGui::StyleColorsDark();
 
 		while (!glfwWindowShouldClose(window)) {
@@ -139,47 +137,32 @@ int main(void) {
 			shader.Bind();
 			GLFunc(glEnable(GL_DEPTH_TEST));
 			GLFunc(glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT));
-			//GLFunc(glDepthFunc(GL_LESS));
 			GLFunc(glDepthRange(-1, 1));
 
 			glm::mat4 projection = glm::perspective(recalculatefov(angle), 1.0f * 1024 / 1024, 1.0f, -1.0f);
 			glm::mat4 view = glm::lookAt(camera, glm::vec3(0.0, 0.0, 0.0), glm::vec3(0.0, 1.0, 0.0));
-
+			glm::mat4 mrs;
+			glm::mat4 mvp;
 			// Model A
-			glm::mat4 model = glm::translate(glm::mat4(1.0f), translationA + glm::vec3(0, 0, 0));
-			glm::mat4 rotation = glm::rotate(glm::mat4(1.0f), glm::radians(rotationA.x), axis_x)
-								* glm::rotate(glm::mat4(1.0f), glm::radians(rotationA.y), axis_y)
-								* glm::rotate(glm::mat4(1.0f), glm::radians(rotationA.z), axis_z);
-			glm::mat4 scale = glm::scale(glm::mat4(1.0f), init_scale * scaleA);
-
-			glm::mat4 mvp = projection * view * model * rotation * scale;
-			shader.SetUniform4f("u_Color", colorA.r, colorA.g, colorA.b, colorA.a);
+			mrs = get_MRS(modelA);
+			mvp = projection * view * mrs;
+			shader.SetUniformVec4f("u_Color", modelA.color);
 			shader.SetUniformMat4f("u_MVP", mvp);
 
 			renderer.Draw(va1, ib1, shader);
 			
 			// Render Model B
-			model = glm::translate(glm::mat4(1.0f), translationB + glm::vec3(0, 0, 0));
-			rotation = glm::rotate(glm::mat4(1.0f), glm::radians(rotationB.x), axis_x)
-				* glm::rotate(glm::mat4(1.0f), glm::radians(rotationB.y), axis_y)
-				* glm::rotate(glm::mat4(1.0f), glm::radians(rotationB.z), axis_z);
-			scale = glm::scale(glm::mat4(1.0f), init_scale * scaleB);
-
-			mvp = projection * view * model * rotation * scale;
-			shader.SetUniform4f("u_Color", colorB.r, colorB.g, colorB.b, colorB.a);
+			mrs = get_MRS(modelB);
+			mvp = projection * view * mrs;
+			shader.SetUniformVec4f("u_Color", modelB.color);
 			shader.SetUniformMat4f("u_MVP", mvp);
 
 			renderer.Draw(va2, ib2, shader);
 
 			// Render Sphere
-			model = glm::translate(glm::mat4(1.0f), translationS + glm::vec3(0, 0, 0));
-			rotation = glm::rotate(glm::mat4(1.0f), glm::radians(rotationS.x), axis_x)
-				* glm::rotate(glm::mat4(1.0f), glm::radians(rotationS.y), axis_y)
-				* glm::rotate(glm::mat4(1.0f), glm::radians(rotationS.z), axis_z);
-			scale = glm::scale(glm::mat4(1.0f), init_scale * scaleS);
-
-			mvp = projection * view * model * rotation * scale;
-			shader.SetUniform4f("u_Color", colorS.r, colorS.g, colorS.b, colorS.a);
+			mrs = get_MRS(sphere);
+			mvp = projection * view * mrs;
+			shader.SetUniformVec4f("u_Color", sphere.color);
 			shader.SetUniformMat4f("u_MVP", mvp);
 
 			renderer.Draw(vas, ibs, shader);
@@ -195,38 +178,38 @@ int main(void) {
 					}
 				}
 
-				if (ImGui::CollapsingHeader(ModelA.GetModelName().c_str())) {
-					ImGui::SliderFloat4("Color A", &colorA.r, 0.0f, 1.0f);
-					ImGui::SliderFloat3("Translation A", &translationA.x, -4.0f, 4.0f);
-					ImGui::SliderFloat3("Rotation Angle A", &rotationA.x, 0.0f, 360.0f);
-					ImGui::SliderFloat("Scale A", &scaleA, 0.0f, 2.0f);
+				if (ImGui::CollapsingHeader(modelA.GetModelName().c_str())) {
+					ImGui::SliderFloat4("Color A", &modelA.color.r, 0.0f, 1.0f);
+					ImGui::SliderFloat3("Translation A", &modelA.translation.x, -4.0f, 4.0f);
+					ImGui::SliderFloat3("Rotation Angle A", &modelA.rotation.x, 0.0f, 360.0f);
+					ImGui::SliderFloat("Scale A", &modelA.scale, 0.0f, 2.0f);
 					if (ImGui::Button("Reset A")) {
-						scaleA = 1.0f;
-						translationA = glm::vec3(0, 0, 0);
-						rotationA = glm::vec3(0, 0, 0);
+						modelA.scale = 1.0f;
+						modelA.translation = glm::vec3(0, 0, 0);
+						modelA.rotation = glm::vec3(0, 0, 0);
 					}
 				}
-				if (ImGui::CollapsingHeader(ModelB.GetModelName().c_str())) {
-					ImGui::SliderFloat4("Color B", &colorB.r, 0.0f, 1.0f);
-					ImGui::SliderFloat3("Translation B", &translationB.x, -4.0f, 4.0f);
-					ImGui::SliderFloat3("Rotation Angle B", &rotationB.x, 0.0f, 360.0f);
-					ImGui::SliderFloat("Scale B", &scaleB, 0.0f, 2.0f);
+				if (ImGui::CollapsingHeader(modelB.GetModelName().c_str())) {
+					ImGui::SliderFloat4("Color B", &modelB.color.r, 0.0f, 1.0f);
+					ImGui::SliderFloat3("Translation B", &modelB.translation.x, -4.0f, 4.0f);
+					ImGui::SliderFloat3("Rotation Angle B", &modelB.rotation.x, 0.0f, 360.0f);
+					ImGui::SliderFloat("Scale B", &modelB.scale, 0.0f, 2.0f);
 					if (ImGui::Button("Reset B")) {
-						scaleB = 0.75f;
-						translationB = glm::vec3(-1, -1, 0);
-						rotationB = glm::vec3(0, 0, 0);
+						modelB.scale = 0.75f;
+						modelB.translation = glm::vec3(-1, -1, 0);
+						modelB.rotation = glm::vec3(0, 0, 0);
 					}
 				}
 
 				if (ImGui::CollapsingHeader(sphere.GetModelName().c_str())) {
-					ImGui::SliderFloat4("Color S", &colorS.r, 0.0f, 1.0f);
-					ImGui::SliderFloat3("Translation S", &translationS.x, -4.0f, 4.0f);
-					ImGui::SliderFloat3("Rotation Angle S", &rotationS.x, 0.0f, 360.0f);
-					ImGui::SliderFloat("Diameter S", &scaleS, 0.0f, 2.0f);
+					ImGui::SliderFloat4("Color S", &sphere.color.r, 0.0f, 1.0f);
+					ImGui::SliderFloat3("Translation S", &sphere.translation.x, -4.0f, 4.0f);
+					ImGui::SliderFloat3("Rotation Angle S", &sphere.rotation.x, 0.0f, 360.0f);
+					ImGui::SliderFloat("Diameter S", &sphere.scale, 0.0f, 2.0f);
 					if (ImGui::Button("Reset S")) {
-						scaleS = 1.0f;
-						translationS = glm::vec3(1, 0, 0);
-						rotationS = glm::vec3(0, 0, 0);
+						sphere.scale = 1.0f;
+						sphere.translation = glm::vec3(1, 0, 0);
+						sphere.rotation = glm::vec3(0, 0, 0);
 					}
 				}
 

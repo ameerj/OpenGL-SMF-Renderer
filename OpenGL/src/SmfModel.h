@@ -1,6 +1,7 @@
 #pragma once
 #include <string>
 #include <vector>
+#include "glm/glm.hpp"
 
 struct Position {
 	float x;
@@ -23,7 +24,7 @@ private:
 	unsigned int m_FaceCount;
 
 public:
-	SmfModel(const std::string& filepath);
+	SmfModel(const std::string& filepath, float scale, glm::vec4 color, glm::vec3 translation, glm::vec3 rotation = glm::vec3(0, 0, 0));
 	~SmfModel();
 
 	float* GetPositions();
@@ -32,6 +33,11 @@ public:
 	unsigned int GetFaceCount();
 
 	std::string GetModelName();
+
+	float scale;
+	glm::vec4 color;
+	glm::vec3 translation;
+	glm::vec3 rotation = glm::vec3(0, 0, 0);
 private:
 	// Parse a line containing a vector
 	Position parsePosition(std::string line);
