@@ -24,6 +24,7 @@ private:
 	unsigned int m_FaceCount;
 
 public:
+	SmfModel();
 	SmfModel(const std::string& filepath, float scale, glm::vec4 color, glm::vec3 translation, glm::vec3 rotation = glm::vec3(0, 0, 0));
 	~SmfModel();
 

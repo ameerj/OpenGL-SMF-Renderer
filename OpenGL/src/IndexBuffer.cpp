@@ -1,5 +1,6 @@
 #include "IndexBuffer.h"
 #include "Renderer.h"
+#include <iostream>
 
 
 IndexBuffer::IndexBuffer(const unsigned int* data, unsigned int count) : m_Count(count) {
@@ -9,6 +10,8 @@ IndexBuffer::IndexBuffer(const unsigned int* data, unsigned int count) : m_Count
 }
 IndexBuffer::~IndexBuffer(){
 	GLFunc(glDeleteBuffers(1, &m_RendererID));
+	std::cout << "DESTROYED IB" << std::endl;
+
 }
 
 void IndexBuffer::Bind() const {

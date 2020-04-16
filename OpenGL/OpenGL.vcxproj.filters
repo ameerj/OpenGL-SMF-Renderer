@@ -465,6 +465,7 @@
     <None Include="src\vendor\glm\gtx\wrap.inl">
       <Filter>Header Files</Filter>
     </None>
+    <None Include="..\..\..\Users\Ameer\Desktop\ivcon_3d_conversion_rel_1_18_win64_incl_shared\android.smf" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\VertexBuffer.h">

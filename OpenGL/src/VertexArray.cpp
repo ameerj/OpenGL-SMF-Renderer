@@ -1,12 +1,14 @@
 #include "VertexArray.h"
 #include "Renderer.h"
 #include "VertexBufferLayout.h"
+#include <iostream>
 
 VertexArray::VertexArray() {
 	GLFunc(glGenVertexArrays(1, &m_RendererID));
 }
 VertexArray::~VertexArray() {
 	GLFunc(glDeleteVertexArrays(1, &m_RendererID));
+	std::cout << "DESTROYED VA" << std::endl;
 
 }
 

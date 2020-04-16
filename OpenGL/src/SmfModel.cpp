@@ -11,7 +11,8 @@ std::vector<std::string> SmfModel::split_string (std::string line, std::string d
 	std::vector<std::string> tokens;
 	size_t pos = 0;
 	while ((pos = line.find(delimiter)) != std::string::npos) {
-		tokens.push_back(line.substr(0, pos));
+		if (pos != 0)
+			tokens.push_back(line.substr(0, pos));
 		line.erase(0, pos + delimiter.length());
 	}
 	tokens.push_back(line.substr(0, pos));
@@ -24,6 +25,8 @@ SmfModel::SmfModel(const std::string& filepath, float scale, glm::vec4 color, gl
 	std::string line;
 
 	while (getline(stream, line)) {
+		if (line.find("#") != std::string::npos)
+			continue;
 		if (line.find("v ") != std::string::npos)
 			m_Positions.push_back(parsePosition(line));
 		else if (line.find("f ") != std::string::npos)
@@ -33,6 +36,9 @@ SmfModel::SmfModel(const std::string& filepath, float scale, glm::vec4 color, gl
 	m_FaceCount = m_Faces.size() * 3;
 }
 
+SmfModel::SmfModel() {
+
+}
 
 SmfModel::~SmfModel(){
 
@@ -78,8 +84,18 @@ Position SmfModel::parsePosition(const std::string line) {
 // Parse a line containing a face
 Face SmfModel::parseFace(std::string line) {
 	Face smfface;
-	std::vector<std::string> tokens = split_string(line, " ");
-
+	std::vector<std::string> tokens;
+	std::size_t found = line.find("/");
+	if (found != std::string::npos) {
+		// .Obj file. Get faces. Disregard other info
+		 tokens = split_string(line, " ");
+		 for (int i = 0; i < tokens.size(); i++) {
+			 tokens[i] = split_string(tokens[i], "/")[0];
+		 }
+	}
+	else {
+		tokens = split_string(line, " ");
+	}
 	smfface.v0 = std::stoul(tokens[1]) - 1; // Subtract one to get proper index within vertex vector
 	smfface.v1 = std::stoul(tokens[2]) - 1;
 	smfface.v2 = std::stoul(tokens[3]) - 1;

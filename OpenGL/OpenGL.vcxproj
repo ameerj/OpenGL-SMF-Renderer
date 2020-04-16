@@ -160,6 +160,7 @@
     <ClCompile Include="src\VertexBufferLayout.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <None Include="..\..\..\Users\Ameer\Desktop\ivcon_3d_conversion_rel_1_18_win64_incl_shared\android.smf" />
     <None Include="res\shaders\shader.shader" />
     <None Include="src\vendor\glm\detail\func_common.inl" />
     <None Include="src\vendor\glm\detail\func_common_simd.inl" />

@@ -66,9 +66,8 @@ int main(void) {
 	GLFWwindow* window;
 	if (!glfwInit())
 		return -1;
-
 	/* Create a windowed mode window and its OpenGL context */
-	window = glfwCreateWindow(1024, 1024, "Hello World", NULL, NULL);
+	window = glfwCreateWindow(1024, 1024, "Hello OpenGL", NULL, NULL);
 	if (!window) {
 		glfwTerminate();
 		return -1;
@@ -79,21 +78,88 @@ int main(void) {
 	glfwSwapInterval(1);
 	if (glewInit() != GLEW_OK)
 		std::cout << "Error: Glew did not init :(" << std::endl;
+
+	int scene = 0;
+
 	{
-		SmfModel modelA("res/smf/bunny_200.smf", 1.0f, 
-			glm::vec4(1.0f, 0.0f, 0.40f, 1.0f), 
-			glm::vec3(0, 0, 0)
-		);
+		// Camera initializations
+		float angle = 60.0f;
+		glm::vec3 camera(0.0, 0.0, 3.0);
 
-		SmfModel modelB("res/smf/cube.smf", 0.75f, 
-			glm::vec4(0.0f, 1.0f, 0.40f, 1.0f), 
-			glm::vec3(-1, -1, 0)
-		);
-		SmfModel sphere("res/smf/sphere.smf", 1.0f, 
-			glm::vec4(1.0f, 1.0f, 1.0f, 1.0f),
-			glm::vec3(1, 0, 0)
-		); // sphere, 0.5 radius, centered at origin
+		SmfModel modelA, modelB, modelC, sphere;
+		if (scene == 0) {
+			modelA = SmfModel("res/smf/pen.smf", 1.0f,
+				glm::vec4(1.0f, 1.0f, 1.00f, 1.0f),
+				glm::vec3(0.770, 0.630, 0.690),
+				glm::vec3(50.5, 75.79, 105.5)
+			);
+			modelB = SmfModel("res/smf/fire.smf", 0.55f,
+				glm::vec4(1.0f, 0.0f, 0.40f, 1.0f),
+				glm::vec3(-0.7, -1.50, 0.65),
+				glm::vec3(270.0, 0, 245)
+			);
+			modelC = SmfModel("res/smf/teapot.smf", 0.237f,
+				glm::vec4(1.0f, 1.0f, 0.683f, 1.0f),
+				glm::vec3(-0.59, -1.115, 0.459),
+				glm::vec3(0, 59, 0)
+			);
 
+			sphere = SmfModel("res/smf/canvas.smf", 2.0f,
+				glm::vec4(0.0f, 0.0f, 1.0f, 1.0f),
+				glm::vec3(0.491, 0, 0),
+				glm::vec3(270, 0, 0)
+
+			); 
+			angle = 45.0f;
+			camera = glm::vec3(2.175, 0.59, 2.55);
+		}
+		if (scene == 1) {
+			modelA = SmfModel("res/smf/rectangle.smf", 0.60f,
+				glm::vec4(0.0f, 1.0f, 1.00f, 1.0f),
+				glm::vec3(0, -1.08, 0)
+			);
+			modelB = SmfModel("res/smf/Mario_s.smf", 0.750f,
+				glm::vec4(1.0f, 0.0f, 0.40f, 1.0f),
+				glm::vec3(0.0, -1.385, 1.692),
+				glm::vec3(0, 173.5, 0)
+			);
+			modelC = SmfModel("res/smf/sphere.smf", 1.0f,
+				glm::vec4(1.0f, 1.0f, 1.0f, 1.0f),
+				glm::vec3(0, 0, 0)
+			); // sphere, 0.5 radius, centered at origin
+
+			sphere = SmfModel("res/smf/Sonic_s.smf", 1.0f,
+				glm::vec4(0.0f, 0.0f, 1.0f, 1.0f),
+				glm::vec3(0.7, -0.615, -2.07),
+				glm::vec3(0, 90, 0)
+			);
+			angle = 42.0f;
+			camera = glm::vec3(4, 2, 4);
+
+		}
+		else {
+			SmfModel modelA("res/smf/pen.smf", 1.0f,
+				glm::vec4(1.0f, 1.0f, 1.00f, 1.0f),
+				glm::vec3(-0.825, 0.355, -1.92),
+				glm::vec3(0.0, 42.35, 141)
+			);
+			SmfModel modelB("res/smf/fire.smf", 0.55f,
+				glm::vec4(1.0f, 0.0f, 0.40f, 1.0f),
+				glm::vec3(-0.7, -1.50, 0.65),
+				glm::vec3(270.0, 0, 245)
+			);
+			SmfModel modelC("res/smf/teapot.smf", 1.0f,
+				glm::vec4(1.0f, 0.0f, 0.40f, 1.0f),
+				glm::vec3(1, 0, 0)
+			);
+
+			SmfModel sphere("res/smf/canvas.smf", 1.0f,
+				glm::vec4(0.0f, 0.0f, 1.0f, 1.0f),
+				glm::vec3(0, -1.65, -4.0),
+				glm::vec3(0, 323, 0)
+
+			); // sphere, 0.5 radius, centered at origin
+		}
 		unsigned int vao; // vertex array buffer
 		GLFunc(glGenVertexArrays(1, &vao));
 		GLFunc(glBindVertexArray(vao));
@@ -113,6 +179,14 @@ int main(void) {
 		va2.AddBuffer(vb2, layout2);
 		IndexBuffer ib2(modelB.GetFaces(), modelB.GetFaceCount());
 
+		// Object 3
+		VertexArray va3;
+		VertexBuffer vb3(modelC.GetPositions(), modelC.GetPositionSize() * sizeof(float));
+		VertexBufferLayout layout3;
+		layout3.Push<float>(3);
+		va3.AddBuffer(vb3, layout3);
+		IndexBuffer ib3(modelC.GetFaces(), modelC.GetFaceCount());
+
 		// Object  sphere
 		VertexArray vas;
 		VertexBuffer vbs(sphere.GetPositions(), sphere.GetPositionSize() * sizeof(float));
@@ -121,9 +195,6 @@ int main(void) {
 		vas.AddBuffer(vbs, layout_s);
 		IndexBuffer ibs(sphere.GetFaces(), sphere.GetFaceCount());
 
-		// Camera initializations
-		float angle = 60.0f;
-		glm::vec3 camera(0.0, 0.0, 3.0);
 
 		Shader shader("res/shaders/shader.shader");
 		Renderer renderer;
@@ -159,6 +230,13 @@ int main(void) {
 
 			renderer.Draw(va2, ib2, shader);
 
+			// Render Model C
+			mrs = get_MRS(modelC);
+			mvp = projection * view * mrs;
+			shader.SetUniformVec4f("u_Color", modelC.color);
+			shader.SetUniformMat4f("u_MVP", mvp);
+
+			renderer.Draw(va3, ib3, shader);
 			// Render Sphere
 			mrs = get_MRS(sphere);
 			mvp = projection * view * mrs;
@@ -200,7 +278,17 @@ int main(void) {
 						modelB.rotation = glm::vec3(0, 0, 0);
 					}
 				}
-
+				if (ImGui::CollapsingHeader(modelC.GetModelName().c_str())) {
+					ImGui::SliderFloat4("Color C", &modelC.color.r, 0.0f, 1.0f);
+					ImGui::SliderFloat3("Translation C", &modelC.translation.x, -4.0f, 4.0f);
+					ImGui::SliderFloat3("Rotation Angle C", &modelC.rotation.x, 0.0f, 360.0f);
+					ImGui::SliderFloat("Scale C", &modelC.scale, 0.0f, 2.0f);
+					if (ImGui::Button("Reset C")) {
+						modelC.scale = 0.75f;
+						modelC.translation = glm::vec3(-1, -1, 0);
+						modelC.rotation = glm::vec3(0, 0, 0);
+					}
+				}
 				if (ImGui::CollapsingHeader(sphere.GetModelName().c_str())) {
 					ImGui::SliderFloat4("Color S", &sphere.color.r, 0.0f, 1.0f);
 					ImGui::SliderFloat3("Translation S", &sphere.translation.x, -4.0f, 4.0f);
