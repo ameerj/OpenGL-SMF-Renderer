@@ -16,7 +16,8 @@
 #include "glm/gtc/matrix_transform.hpp"
 #include "imgui/imgui.h"
 #include "imgui/imgui_impl_glfw_gl3.h"
-
+#define 	GLFW_VERSION_MAJOR   4
+#define 	GLFW_VERSION_MINOR   3
 
 int main(void){
 	GLFWwindow* window;
@@ -24,7 +25,7 @@ int main(void){
 		return -1;
 
 	/* Create a windowed mode window and its OpenGL context */
-	window = glfwCreateWindow(960, 540, "Hello World", NULL, NULL);
+	window = glfwCreateWindow(1280, 720, "Hello World", NULL, NULL);
 	if (!window){
 		glfwTerminate();
 		return -1;
@@ -33,7 +34,18 @@ int main(void){
 	/* Make the window's context current */
 	glfwMakeContextCurrent(window);
 	glfwSwapInterval(1);
+	std::cout << "VERSION " <<  glfwGetVersionString() << std::endl;
+	std::cout << "OpenGL version: " << glGetString(GL_VERSION)
+		<< ", renderer: " << glGetString(GL_RENDERER) << std::endl;
 
+	GLint major, minor;
+	glGetIntegerv(GL_MAJOR_VERSION, &major);
+	glGetIntegerv(GL_MINOR_VERSION, &minor);
+
+	if (major * 10 + minor < 43) {
+		throw std::runtime_error(
+			"OpenGL version 4.3 or higher is required to run this program.");
+	}
 	if (glewInit() != GLEW_OK)
 		std::cout << "Error: Glew did not init :(" << std::endl;
 	{
@@ -48,10 +60,10 @@ int main(void){
 		*/
 
 		float positions[] = {
-			-50, -50, 0.0f, 0.0f,
-			50, -50, 1.0f, 0.0f,
-			50, 50, 1.0f, 1.0f,
-			-50, 50, 0.0f, 1.0f
+			-1, -1,  0.0f, 0.0f,
+			1, -1, 1.0f, 0.0f,
+			1, 1, 1.0f, 1.0f,
+			-1, 1, 0.0f, 1.0f
 		};
 		unsigned int indices[] = {
 			0, 1, 2,
@@ -71,15 +83,37 @@ int main(void){
 		va.AddBuffer(vb, layout);
 
 
+		// dimensions of the image
+		int tex_w = 512, tex_h = 512;
+		GLuint tex_output;
+		GLFunc(glGenTextures(1, &tex_output));
+		GLFunc(glActiveTexture(GL_TEXTURE0));
+		GLFunc(glBindTexture(GL_TEXTURE_2D, tex_output));
+		GLFunc(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE));
+		GLFunc(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE));
+		GLFunc(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR));
+		GLFunc(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR));
+		GLFunc(glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, tex_w, tex_h, 0, GL_RGBA, GL_FLOAT,
+			NULL));
+		GLFunc(glBindImageTexture(0, tex_output, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA32F));
+
+		Shader c_shader("res/shaders/compute.shader");
+		c_shader.Bind();
+
+
+		GLFunc(glDispatchCompute((GLuint)tex_w, (GLuint)tex_h, 1));
+
+		// make sure writing to image has finished before read
+		GLFunc(glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT));
 
 		IndexBuffer ib(indices, 6);
 
-		glm::mat4 proj = glm::ortho(0.0f, 960.0f, 0.0f, 540.0f, -1.0f, 1.0f);
+		glm::mat4 proj = glm::ortho(-1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f);
 		glm::mat4 view = glm::translate(glm::mat4(1.0f), glm::vec3(0, 0, 0));
-		glm::vec3 translationA = glm::vec3(200, 200, 0);
-		glm::vec3 translationB = glm::vec3(400, 200, 0);
+		glm::vec3 translationA = glm::vec3(0, 0, 0);
+		//glm::vec3 translationB = glm::vec3(400, 200, 0);
 		Shader shader("res/shaders/shader.shader");
-
+		// 
 		shader.Bind();
 		shader.SetUniform4f("u_Color", 0.2f, 0.3f, 0.7f, 1.0f);
 
@@ -89,9 +123,10 @@ int main(void){
 		// Setup style
 		ImGui::StyleColorsDark();
 
-		Texture texture("res/textures/icon.png");
-		texture.Bind(0);
-		shader.SetUniform1i("u_Texture", 0);
+		//Texture texture("res/textures/icon.png");
+		// Texture texture("out.png");
+		// texture.Bind(0);
+		// shader.SetUniform1i("u_Texture", 0);
 		float r = 0.2f;
 		float increment = 0.005f;
 		while (!glfwWindowShouldClose(window)) {
@@ -108,12 +143,12 @@ int main(void){
 			renderer.Draw(va, ib, shader);
 			
 			// object B
-			model = glm::translate(glm::mat4(1.0f), translationB);
-			mvp = proj * view * model;
-			shader.SetUniform4f("u_Color", 0.0, r, 0.7f, 1.0f);
-			shader.SetUniformMat4f("u_MVP", mvp);
+			// model = glm::translate(glm::mat4(1.0f), translationB);
+			// mvp = proj * view * model;
+			// shader.SetUniform4f("u_Color", 0.0, r, 0.7f, 1.0f);
+			// shader.SetUniformMat4f("u_MVP", mvp);
 
-			renderer.Draw(va, ib, shader);
+			// renderer.Draw(va, ib, shader);
 
 			if (r > 1.0f)
 				increment = -0.005f;
@@ -122,7 +157,7 @@ int main(void){
 			r += increment;
 			{
 				ImGui::SliderFloat3("Translation", &translationA.x, 0.0f, 960.0f);
-				ImGui::SliderFloat3("Translation B", &translationB.x, 0.0f, 960.0f);
+				//ImGui::SliderFloat3("Translation B", &translationB.x, 0.0f, 960.0f);
 				ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
 			}
 			ImGui::Render();

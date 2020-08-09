@@ -8,7 +8,7 @@
 
 Shader::Shader(const std::string& filepath) : m_FilePath(filepath), m_RendererID(0) {
 	ShaderProgram source = ParseShader(filepath);
-	m_RendererID = CreateShader(source.VertexSource, source.FragmentSource);
+	m_RendererID = CreateShader(source.VertexSource, source.FragmentSource, source.ComputeSource);
 
 }
 Shader::~Shader() {
@@ -18,10 +18,10 @@ Shader::~Shader() {
 ShaderProgram Shader::ParseShader(const std::string& filepath) {
 	std::ifstream stream(filepath);
 	std::string line;
-	std::stringstream ss[2];
+	std::stringstream ss[3];
 
 	enum class ShaderType {
-		NONE = -1, VERTEX = 0, FRAGMENT = 1
+		NONE = -1, VERTEX = 0, FRAGMENT = 1, COMPUTE = 2,
 	};
 	ShaderType type = ShaderType::NONE;
 	while (getline(stream, line)) {
@@ -30,12 +30,14 @@ ShaderProgram Shader::ParseShader(const std::string& filepath) {
 				type = ShaderType::VERTEX;
 			else if (line.find("fragment") != std::string::npos)
 				type = ShaderType::FRAGMENT;
+			else if (line.find("compute") != std::string::npos)
+				type = ShaderType::COMPUTE;
 		}
 		else {
 			ss[(int)type] << line << '\n';
 		}
 	}
-	return { ss[0].str(), ss[1].str() };
+	return { ss[0].str(), ss[1].str(), ss[2].str() };
 }
 
 unsigned int Shader::CompileShader(const std::string& source, unsigned int type) {
@@ -60,11 +62,18 @@ unsigned int Shader::CompileShader(const std::string& source, unsigned int type)
 	return id;
 }
 
-unsigned int Shader::CreateShader(const std::string& vertexShader, const std::string& fragmentShader) {
+unsigned int Shader::CreateShader(const std::string& vertexShader, const std::string& fragmentShader, const std::string& computeShader) {
 	unsigned int program = glCreateProgram();
 	unsigned int vs = CompileShader(vertexShader, GL_VERTEX_SHADER);
 	unsigned int fs = CompileShader(fragmentShader, GL_FRAGMENT_SHADER);
+	if (computeShader != "") {
+	unsigned int cs = CompileShader(computeShader, GL_COMPUTE_SHADER);
 
+		GLFunc(glAttachShader(program, cs));
+		GLFunc(glLinkProgram(program));
+		GLFunc(glDeleteShader(cs));
+		return program;
+	}
 	GLFunc(glAttachShader(program, vs));
 	GLFunc(glAttachShader(program, fs));
 
@@ -79,6 +88,7 @@ unsigned int Shader::CreateShader(const std::string& vertexShader, const std::st
 
 void Shader::Bind() const {
 	GLFunc(glUseProgram(m_RendererID));
+
 }
 void Shader::Unbind() const {
 	GLFunc(glUseProgram(0));
