@@ -57,6 +57,9 @@
     <ClCompile Include="src\vendor\imgui\imgui_impl_glfw_gl3.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="src\astc.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <None Include="res\shaders\shader.shader" />
@@ -462,7 +465,7 @@
     <None Include="src\vendor\glm\gtx\wrap.inl">
       <Filter>Header Files</Filter>
     </None>
-    <None Include="res\shaders\compute.shader" />
+    <None Include="res\shaders\compute.comp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\VertexBuffer.h">
@@ -1240,6 +1243,15 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="src\vendor\imgui\stb_truetype.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\astc_decode.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\astc.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\stb_image_write.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

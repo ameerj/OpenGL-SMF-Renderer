@@ -1,4 +1,4 @@
-#include <GL/glew.h>
+﻿#include <GL/glew.h>
 #include <GLFW/glfw3.h>
 #include <iostream>
 #include <fstream>
@@ -16,8 +16,58 @@
 #include "glm/gtc/matrix_transform.hpp"
 #include "imgui/imgui.h"
 #include "imgui/imgui_impl_glfw_gl3.h"
+#include "astc_decode.h"
+#include "astc.h"
+
 #define 	GLFW_VERSION_MAJOR   4
 #define 	GLFW_VERSION_MINOR   3
+
+// 
+// class InputBitStream {
+// public:
+// 	constexpr explicit InputBitStream(const u8* ptr, std::size_t start_offset = 0)
+// 		: cur_byte{ ptr }, next_bit{ start_offset % 8 } {}
+// 
+// 	constexpr std::size_t GetBitsRead() const {
+// 		return bits_read;
+// 	}
+// 
+// 	constexpr bool ReadBit() {
+// 		const bool bit = (*cur_byte >> next_bit++) & 1;
+// 		while (next_bit >= 8) {
+// 			next_bit -= 8;
+// 			cur_byte++;
+// 		}
+// 
+// 		bits_read++;
+// 		return bit;
+// 	}
+// 
+// 	constexpr u32 ReadBits(std::size_t nBits) {
+// 		u32 ret = 0;
+// 		for (std::size_t i = 0; i < nBits; ++i) {
+// 			ret |= (ReadBit() & 1) << i;
+// 		}
+// 		return ret;
+// 	}
+// 
+// 	template <std::size_t nBits>
+// 	constexpr u32 ReadBits() {
+// 		u32 ret = 0;
+// 		for (std::size_t i = 0; i < nBits; ++i) {
+// 			ret |= (ReadBit() & 1) << i;
+// 		}
+// 		return ret;
+// 	}
+// 
+// private:
+// 	const u8* cur_byte;
+// 	std::size_t next_bit = 0;
+// 	std::size_t bits_read = 0;
+// };
+// 
+
+// std::array EncodingsValues = MakeEncodedValues();
 
 int main(void){
 	GLFWwindow* window;
@@ -48,16 +98,81 @@ int main(void){
 	}
 	if (glewInit() != GLEW_OK)
 		std::cout << "Error: Glew did not init :(" << std::endl;
+
+
+	std::ifstream instream("res/textures/patterninput.astc", std::ios::in | std::ios::binary);
+	std::vector<uint8_t> data((std::istreambuf_iterator<char>(instream)), std::istreambuf_iterator<char>());
+	std::vector<uint32_t> image;
+
+	std::vector<uint8_t> shit = Tegra::Texture::ASTC::Decompress(data.data(), 256, 256, 1, 6, 6);
+	//InputBitStream stm(data.data()) ;
+	//u32 res = stm.ReadBits<32>();
+
+	
+
+	for (std::size_t i = 0; i < data.size(); i+=4) {
+		uint32_t img_32;
+		img_32 =  (data[i] &     (0xff)) << 24;
+		img_32 |= (data[i + 1] & (0xff)) << 16;
+		img_32 |= (data[i + 2] & (0xff)) << 8;
+		img_32 |= (data[i + 3] & (0xff));
+
+		image.push_back(img_32);
+	}
+
 	{
-		/*
-		// updating to include texture coords
-		float positions[] = {
-			-50, -50,
-			50, -50,
-			50, 50,
-			-50, 50,
-		};
-		*/
+
+		// astc_compressed_image img{};
+		// load_cimage("res/textures/biggdog.astc", img);
+
+		// FILE * pFile;
+		// long lSize;
+		// size_t result;
+		// 
+		// fopen_s(&pFile, "res/textures/biggdog.astc", "rb");
+		// // obtain file size:
+		// fseek(pFile, 0, SEEK_END);
+		// lSize = ftell(pFile);
+		// rewind(pFile);
+
+		// EncodingsValues[1];
+		
+		GLuint IMG_ssbo;
+		GLFunc(glGenBuffers(1, &IMG_ssbo));
+		GLFunc(glBindBuffer(GL_SHADER_STORAGE_BUFFER, IMG_ssbo));
+		GLFunc(glBufferData(GL_SHADER_STORAGE_BUFFER, data.size(), data.data(), GL_STATIC_COPY));
+		GLFunc(glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, IMG_ssbo));
+		GLFunc(glBindBuffer(GL_SHADER_STORAGE_BUFFER, IMG_ssbo)); // unbind
+
+		GLuint ENC_ssbo;
+		GLFunc(glGenBuffers(1, &ENC_ssbo));
+		GLFunc(glBindBuffer(GL_SHADER_STORAGE_BUFFER, ENC_ssbo));
+		GLFunc(glBufferData(GL_SHADER_STORAGE_BUFFER, EncodingsValues.size() * sizeof(IntegerEncodedValue), EncodingsValues.data(), GL_STATIC_COPY));
+		GLFunc(glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, ENC_ssbo));
+		GLFunc(glBindBuffer(GL_SHADER_STORAGE_BUFFER, ENC_ssbo)); // unbind
+
+		// dimensions of the image
+		GLuint tex_output;
+		GLFunc(glGenTextures(1, &tex_output));
+		GLFunc(glActiveTexture(GL_TEXTURE0));
+		GLFunc(glBindTexture(GL_TEXTURE_2D, tex_output));
+		GLFunc(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE));
+		GLFunc(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE));
+		GLFunc(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR));
+		GLFunc(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR));
+		GLFunc(glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, 256, 256, 0, GL_RGBA, GL_FLOAT,
+			NULL));
+		GLFunc(glBindImageTexture(0, tex_output, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA32F));
+
+		Shader c_shader("res/shaders/compute.comp");
+		c_shader.Bind();
+		c_shader.SetUniform3u("image_size", 256, 256, 1);
+		c_shader.SetUniform2u("num_image_blocks", 256/6, 256/6);
+		GLFunc(glDispatchCompute((GLuint)256/6, (GLuint)256/6, 1));
+
+		// make sure writing to image has finished before read
+		GLFunc(glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT));
+		c_shader.Unbind();
 
 		float positions[] = {
 			-1, -1,  0.0f, 0.0f,
@@ -82,30 +197,6 @@ int main(void){
 		layout.Push<float>(2);
 		va.AddBuffer(vb, layout);
 
-
-		// dimensions of the image
-		int tex_w = 512, tex_h = 512;
-		GLuint tex_output;
-		GLFunc(glGenTextures(1, &tex_output));
-		GLFunc(glActiveTexture(GL_TEXTURE0));
-		GLFunc(glBindTexture(GL_TEXTURE_2D, tex_output));
-		GLFunc(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE));
-		GLFunc(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE));
-		GLFunc(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR));
-		GLFunc(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR));
-		GLFunc(glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, tex_w, tex_h, 0, GL_RGBA, GL_FLOAT,
-			NULL));
-		GLFunc(glBindImageTexture(0, tex_output, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA32F));
-
-		Shader c_shader("res/shaders/compute.shader");
-		c_shader.Bind();
-
-
-		GLFunc(glDispatchCompute((GLuint)tex_w, (GLuint)tex_h, 1));
-
-		// make sure writing to image has finished before read
-		GLFunc(glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT));
-
 		IndexBuffer ib(indices, 6);
 
 		glm::mat4 proj = glm::ortho(-1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f);
@@ -115,7 +206,7 @@ int main(void){
 		Shader shader("res/shaders/shader.shader");
 		// 
 		shader.Bind();
-		shader.SetUniform4f("u_Color", 0.2f, 0.3f, 0.7f, 1.0f);
+		//shader.SetUniform4f("u_Color", 0.2f, 0.3f, 0.7f, 1.0f);
 
 		Renderer renderer;
 		ImGui::CreateContext();

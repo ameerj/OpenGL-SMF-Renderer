@@ -1,0 +1,1488 @@
+#shader compute
+#version 460
+
+#extension GL_NV_gpu_shader5 : enable
+
+
+layout(local_size_x = 6, local_size_y = 6, local_size_z = 1) in;
+
+layout(location = 2) uniform uvec3 image_size;
+layout(location = 1) uniform uvec2 num_image_blocks;
+
+//layout(binding = 0) uniform image2D dest_image;
+layout(rgba32f, binding = 0) uniform image2D dest_image;
+
+
+uint current_index = 0;
+int bitsread = 0;
+uint total_bitsread = 0;
+uint8_t local_buff[16];
+
+const int JustBits = 0;
+const int Qus32 = 1;
+const int Trit = 2;
+
+struct EncodingData {
+    uint encoding;
+    uint num_bits;
+    uint bit_value;
+    uint qus32_trit_value;
+};
+
+layout(binding = 1) readonly buffer EncodingsValues {
+    EncodingData encoding_values[256];
+};
+
+layout(std430, binding = 3) readonly buffer  astc_img {
+    //uint8_t astc_data[];
+    uint8_t astc_data[];
+};
+
+const ivec3 BLOCK_SIZE_IN_TEXELS = ivec3(6, 6, 1);
+const int BLOCK_SIZE_IN_BYTES = 16;
+
+const int BLOCK_INFO_ERROR = 0;
+const int BLOCK_INFO_VOID_EXTENT_HDR = 1;
+const int BLOCK_INFO_VOID_EXTENT_LDR = 2;
+const int BLOCK_INFO_NORMAL = 3;
+
+const int reverse_lookup[16] = {
+0x0, 0x8, 0x4, 0xc, 0x2, 0xa, 0x6, 0xe,
+0x1, 0x9, 0x5, 0xd, 0x3, 0xb, 0x7, 0xf, 
+};
+
+uint8_t reverse(uint8_t n) {
+   // Reverse the top and bottom nibble then swap them.
+   return uint8_t( (reverse_lookup[int(n) & 4] << 4) | reverse_lookup[int(n) >> 4]);
+}
+
+
+uint8_t ReadWord(uint block_index, int word_index) {
+    return astc_data[block_index + word_index];
+}
+
+// Replicates low numBits such that [(toBit - 1):(toBit - 1 - fromBit)]
+// is the same as [(numBits - 1):0] and repeats all the way down.
+uint Replicate(uint val, uint num_bits, uint to_bit) {
+    if (num_bits == 0) {
+        return 0;
+    }
+    if (to_bit == 0) {
+        return 0;
+    }
+    const uint v = val & uint((1 << num_bits) - 1);
+    uint res = v;
+    uint reslen = num_bits;
+    while (reslen < to_bit) {
+        uint comp = 0;
+        if (num_bits > to_bit - reslen) {
+            uint newshift = to_bit - reslen;
+            comp = num_bits - newshift;
+            num_bits = newshift;
+        }
+        res = uint(res << num_bits);
+        res = uint(res | (v >> comp));
+        reslen += num_bits;
+    }
+    return res;
+}
+
+uint NumReplicateEntries(uint num_bits) {
+    return uint(1) << num_bits;
+}
+
+uint[256] MakeReplicateTable(uint num_bits, uint to_bit) {
+    uint size = NumReplicateEntries(num_bits);
+    uint table[256];
+    for (uint value = 0; value < size; value++) {
+        table[value] = Replicate(value, num_bits, to_bit);
+    }
+    return table;
+}
+
+//uint[] REPLICATE_BYTE_TO_16_TABLE = MakeReplicateTable<u32, 8, 16>();
+uint ReplicateByteTo16(uint value) {
+    return MakeReplicateTable(8, 16)[value];
+}
+
+uint ReplicateBitTo7(uint value) {
+    return MakeReplicateTable(1, 7)[value];;
+}
+
+uint ReplicateBitTo9(uint value) {
+    return MakeReplicateTable(1, 9)[value];
+}
+
+const uint[256] REPLICATE_1_BIT_TO_6_TABLE = MakeReplicateTable(1, 6);
+const uint[256] REPLICATE_2_BIT_TO_6_TABLE = MakeReplicateTable(2, 6);
+const uint[256] REPLICATE_3_BIT_TO_6_TABLE = MakeReplicateTable(3, 6);
+const uint[256] REPLICATE_4_BIT_TO_6_TABLE = MakeReplicateTable(4, 6);
+const uint[256] REPLICATE_5_BIT_TO_6_TABLE = MakeReplicateTable(5, 6);
+const uint FastReplicateTo6(uint value, uint num_bits) {
+    switch (num_bits) {
+    case 1:
+        return REPLICATE_1_BIT_TO_6_TABLE[value];
+    case 2:
+        return REPLICATE_2_BIT_TO_6_TABLE[value];
+    case 3:
+        return REPLICATE_3_BIT_TO_6_TABLE[value];
+    case 4:
+        return REPLICATE_4_BIT_TO_6_TABLE[value];
+    case 5:
+        return REPLICATE_5_BIT_TO_6_TABLE[value];
+    default:
+        return Replicate(value, num_bits, 6);
+    }
+}
+
+// Replicates lsb n times
+uint ReplicateBitToN(uint n, uint value) {
+    uint ret = 0;
+    for (uint i = 0; i < n; i++) {
+        ret |= (bitfieldExtract(value, 0, 1) << i) ;
+    }
+    return ret;
+}
+
+// Partition selection functions as specified in
+// C.2.21
+uint hash52(uint p) {
+    p ^= p >> 15;
+    p -= p << 17;
+    p += p << 7;
+    p += p << 4;
+    p ^= p >> 5;
+    p += p << 16;
+    p ^= p >> 7;
+    p ^= p >> 3;
+    p ^= p << 6;
+    p ^= p >> 17;
+    return p;
+}
+
+uint SelectPartition(uint seed, uint x, uint y, uint z, uint partition_count, bool small_block) {
+    if (1 == partition_count)
+        return 0;
+
+    if (small_block) {
+        x <<= 1;
+        y <<= 1;
+        z <<= 1;
+    }
+
+    seed += (partition_count - 1) * 1024;
+
+    uint rnum = hash52(uint(seed));
+    uint seed1 =  uint(rnum & 0xF);
+    uint seed2 =  uint((rnum >> 4) & 0xF);
+    uint seed3 =  uint((rnum >> 8) & 0xF);
+    uint seed4 =  uint((rnum >> 12) & 0xF);
+    uint seed5 =  uint((rnum >> 16) & 0xF);
+    uint seed6 =  uint((rnum >> 20) & 0xF);
+    uint seed7 =  uint((rnum >> 24) & 0xF);
+    uint seed8 =  uint((rnum >> 28) & 0xF);
+    uint seed9 =  uint((rnum >> 18) & 0xF);
+    uint seed10 = uint((rnum >> 22) & 0xF);
+    uint seed11 = uint((rnum >> 26) & 0xF);
+    uint seed12 = uint(((rnum >> 30) | (rnum << 2)) & 0xF);
+
+    seed1 =  (seed1 * seed1);
+    seed2 =  (seed2 * seed2);
+    seed3 =  (seed3 * seed3);
+    seed4 =  (seed4 * seed4);
+    seed5 =  (seed5 * seed5);
+    seed6 =  (seed6 * seed6);
+    seed7 =  (seed7 * seed7);
+    seed8 =  (seed8 * seed8);
+    seed9 =  (seed9 * seed9);
+    seed10 = (seed10 * seed10);
+    seed11 = (seed11 * seed11);
+    seed12 = (seed12 * seed12);
+
+    int sh1, sh2, sh3;
+    if ( (seed & 1) > 0) {
+        sh1 = (seed & 2) > 0 ? 4 : 5;
+        sh2 = (partition_count == 3) ? 6 : 5;
+    } else {
+        sh1 = (partition_count == 3) ? 6 : 5;
+        sh2 = (seed & 2) > 0 ? 4 : 5;
+    }
+    sh3 = (seed & 0x10) > 0 ? sh1 : sh2;
+
+    seed1 =  (seed1 >> sh1);
+    seed2 =  (seed2 >> sh2);
+    seed3 =  (seed3 >> sh1);
+    seed4 =  (seed4 >> sh2);
+    seed5 =  (seed5 >> sh1);
+    seed6 =  (seed6 >> sh2);
+    seed7 =  (seed7 >> sh1);
+    seed8 =  (seed8 >> sh2);
+    seed9 =  (seed9 >> sh3);
+    seed10 = (seed10 >> sh3);
+    seed11 = (seed11 >> sh3);
+    seed12 = (seed12 >> sh3);
+
+    uint a = seed1 * x + seed2 * y + seed11 * z + (rnum >> 14);
+    uint b = seed3 * x + seed4 * y + seed12 * z + (rnum >> 10);
+    uint c = seed5 * x + seed6 * y + seed9 * z + (rnum >> 6);
+    uint d = seed7 * x + seed8 * y + seed10 * z + (rnum >> 2);
+
+    a &= 0x3F;
+    b &= 0x3F;
+    c &= 0x3F;
+    d &= 0x3F;
+
+    if (partition_count < 4)
+        d = 0;
+    if (partition_count < 3)
+        c = 0;
+
+    if (a >= b && a >= c && a >= d)
+        return 0;
+    else if (b >= c && b >= d)
+        return 1;
+    else if (c >= d)
+        return 2;
+    return 3;
+}
+
+uint Select2DPartition(uint seed, uint x, uint y, uint partition_count, bool small_block) {
+    return SelectPartition(seed, x, y, 0, partition_count, small_block);
+}
+
+uint ReadBit() {
+    uint bit = bitfieldExtract(local_buff[current_index], bitsread, 1); 
+    bitsread++;
+    total_bitsread++;
+    if (bitsread == 8) {
+        current_index++;
+        bitsread = 0;
+    }
+    return bit;
+}
+
+uint StreamBits(uint num_bits) {
+    uint ret = 0;
+    for (uint i = 0; i < num_bits; i++) {
+        ret |= ((ReadBit() & 1) << i);
+    }
+    return ret;
+}
+
+// Define color data.
+uint8_t color_endpoint_data[16];
+int color_bitsread = 0;
+uint total_color_bitsread = 0;
+int color_index = 0;
+
+// Define color data.
+uint8_t texel_weight_data[16];
+int texel_bitsread = 0;
+uint total_texel_bitsread = 0;
+int texel_index = 0;
+
+bool texel_flag = false;
+
+uint ReadColorBit() {
+    uint bit = 0;
+    if (texel_flag) {
+        bit = bitfieldExtract(texel_weight_data[texel_index], texel_bitsread, 1); 
+        texel_bitsread++;
+        total_texel_bitsread++;
+        if (texel_bitsread == 8) {
+            texel_index++;
+            texel_bitsread = 0;
+        }
+    }
+    else { 
+        bit = bitfieldExtract(color_endpoint_data[color_index], color_bitsread, 1); 
+        color_bitsread++;
+        total_color_bitsread++;
+        if (color_bitsread == 8) {
+            color_index++;
+            color_bitsread = 0;
+        }
+    }
+    return bit;
+}
+
+uint StreamColorBits(uint num_bits) {
+    uint ret = 0;
+    for (uint i = 0; i < num_bits; i++) {
+        ret |= ((ReadColorBit() & 1) << i);
+    }
+    return ret;
+}
+EncodingData result_vector[100];
+int result_index = 0;
+
+
+EncodingData texel_vector[100];
+int texel_vector_index = 0;
+
+
+void ResultEmplaceBack(EncodingData val) {
+    if (texel_flag) {
+        texel_vector[texel_vector_index] = val;
+        texel_vector_index++;
+    } else {
+        result_vector[result_index] = val;
+        result_index++;
+    }
+}
+
+// Returns the number of bits required to encode nVals values.
+uint GetBitLength(uint n_vals, int encoding_index) {
+    uint totalBits = encoding_values[encoding_index].num_bits * n_vals;
+    if (encoding_values[encoding_index].encoding == Trit) {
+        totalBits += (n_vals * 8 + 4) / 5;
+    } else if (encoding_values[encoding_index].encoding == Qus32) {
+        totalBits += (n_vals * 7 + 2) / 3;
+    }
+    if (encoding_values[encoding_index].num_bits == uint(5)){
+    // if (encoding_index == 31){
+        for (uint j = 0; j < 4; j++) {
+        for (uint i = 0; i < 4; i++) {
+            // imageStore(dest_image, ivec2(6,0) + ivec2(i,j) , vec4(0,1,1,1));
+        }
+    }
+    }
+    return totalBits;
+}
+
+uint GetNumWeightValues(uvec2 size, bool dual_plane) {
+    uint n_vals = size.x * size.y;
+    if (dual_plane) {
+        n_vals *= 2;
+    }
+    return n_vals;
+
+}
+
+uint GetPackedBitSize(uvec2 size, bool dual_plane, int max_weight) {
+    // How many indices do we have?
+    uint n_vals = GetNumWeightValues(size, dual_plane);
+    return GetBitLength(n_vals, max_weight);
+}
+// Bits class operator[]
+uint BitsBracket(uint bits, uint pos) {
+    return ((bits >> pos) & 1);
+}
+
+// Bits class operator()
+uint BitsOp(uint bits, uint start, uint end) {
+        if (start == end) {
+            //return (*this)[start];
+            return BitsBracket(bits, start);
+        } else if (start > end) {
+            uint t = start;
+            start = end;
+            end = t;
+        }
+
+        uint mask = (1 << (end - start + 1)) - 1;
+        return ((bits >> start) & mask);
+}
+
+//*
+
+void DecodeQus32Block(uint num_bits) { // Value number of bits
+   // Implement the algorithm in section C.2.12
+   uint m[3];
+   uint q[3];
+   uint Q;
+
+   // Read the trit encoded block according to
+   // table C.2.15
+   m[0] = StreamColorBits(num_bits);
+   Q = StreamColorBits(3);
+   m[1] = StreamColorBits(num_bits);
+   Q |= StreamColorBits(2) << 3;
+   m[2] = StreamColorBits(num_bits);
+   Q |= StreamColorBits(2) << 5;
+
+   if (BitsOp(Q, 1, 2) == 3 && BitsOp(Q, 5, 6) == 0) {
+       q[0] = 4;
+       q[1] = 4;
+       q[2] = (BitsBracket(Q, 0) << 2) | ((BitsBracket(Q, 4) & ~BitsBracket(Q, 0)) << 1) | (BitsBracket(Q, 3) & ~BitsBracket(Q, 0));
+   } 
+   else {
+       uint C = 0;
+       if (BitsOp(Q, 1, 2) == 3) {
+           q[2] = 4;
+           C = (BitsOp(Q, 3, 4) << 3) | ((~BitsOp(Q, 5, 6) & 3) << 1) | BitsBracket(Q, 0);
+       } else {
+           q[2] = BitsOp(Q, 5, 6);
+           C = BitsOp(Q, 0, 4);
+       }
+   
+       if (BitsOp(C, 0, 2) == 5) {
+           q[1] = 4;
+           q[0] = BitsOp(C, 3, 4);
+       } else {
+           q[1] = BitsOp(C, 3, 4);
+           q[0] = BitsOp(C, 0, 2);
+       }
+   }
+
+   for (uint i = 0; i < 3; i++) {
+       EncodingData val;
+       val.encoding = Qus32;
+       val.num_bits = num_bits;
+       val.bit_value = m[i];
+       val.qus32_trit_value = q[i];
+       ResultEmplaceBack(val);
+   }
+}
+
+
+void DecodeTritBlock(uint num_bits) { 
+   // Implement the algorithm in section C.2.12
+   uint m[5];
+   uint t[5];
+   uint T;
+
+   // Read the trit encoded block according to
+   // table C.2.14
+   m[0] = StreamColorBits(num_bits);
+   T = StreamColorBits(2);
+   m[1] = StreamColorBits(num_bits);
+   T |= StreamColorBits(2) << 2;
+   m[2] = StreamColorBits(num_bits);
+   T |= StreamColorBits(1) << 4;
+   m[3] = StreamColorBits(num_bits);
+   T |= StreamColorBits(2) << 5;
+   m[4] = StreamColorBits(num_bits);
+   T |= StreamColorBits(1) << 7;
+
+   uint C = 0;
+
+   //Bits<u32> Tb(T);
+   if (BitsOp(T, 2, 4) == 7) {
+       C = (BitsOp(T, 5, 7) << 2) | BitsOp(T, 0, 1);
+       t[4] = t[3] = 2;
+   } else {
+       C = BitsOp(T, 0, 4);
+       if (BitsOp(T, 5, 6) == 3) {
+           t[4] = 2;
+           t[3] = BitsBracket(T, 7);
+       } else {
+           t[4] = BitsBracket(T, 7);
+           t[3] = BitsOp(T, 5, 6);
+       }
+   }
+
+   //Bits<u32> Cb(C);
+   if (BitsOp(C, 0, 1) == 3) {
+       t[2] = 2;
+       t[1] = BitsBracket(C, 4);
+       t[0] = (BitsBracket(C, 3) << 1) | (BitsBracket(C,2) & ~BitsBracket(C,3) );
+   } else if (BitsOp(C, 2, 3) == 3) {
+       t[2] = 2;
+       t[1] = 2;
+       t[0] = BitsOp(C, 0, 1);
+   } else {
+       t[2] = BitsBracket(C, 4);
+       t[1] = BitsOp(C, 2, 3);
+       t[0] = (BitsBracket(C, 1) << 1) | (BitsBracket(C, 0) & ~BitsBracket(C, 1));
+   }
+
+   for (uint i = 0; i < 5; i++) {
+       EncodingData val;
+       val.encoding = Trit;
+       val.num_bits = num_bits;
+       val.bit_value = m[i];
+       val.qus32_trit_value = t[i];
+       ResultEmplaceBack(val);
+   }
+
+}
+
+//*/
+
+void DecodeIntegerSequence(uint max_range, 
+                            uint num_values) {
+    // Determine encoding parameters
+    EncodingData val = encoding_values[max_range];
+    uint vals_decoded = 0;
+    while (vals_decoded < num_values) {
+        switch (val.encoding) {
+        case Qus32:
+            DecodeQus32Block(val.num_bits);
+            vals_decoded += 3;
+            break;
+
+        case Trit:
+            DecodeTritBlock(val.num_bits);
+            vals_decoded += 5;
+            break;
+        
+        case JustBits:
+            val.bit_value = StreamColorBits(val.num_bits);
+            ResultEmplaceBack(val);
+            vals_decoded++;
+            break;
+        }
+    }
+}
+
+void DecodeColorValues(out uint color_values[32], uvec4 modes, uint num_partitions,
+                      uint color_data_bits) {
+    // First figure out how many color values we have
+    uint num_values = 0;
+    for (uint i = 0; i < num_partitions; i++) {
+        num_values += ((modes[i] >> 2) + 1) << 1;
+    }
+
+    // Then based on the number of values and the remaining number of bits,
+    // figure out the max value for each of them...
+    int range = 256;
+    while (--range > 0) {
+        EncodingData val = encoding_values[range];
+        uint bitLength = GetBitLength(num_values, range);
+        if (bitLength <= color_data_bits) {
+            // Find the smallest possible range that matches the given encoding
+            while (--range > 0) {
+                EncodingData newval = encoding_values[range];
+                if (newval.encoding != val.encoding && newval.num_bits != val.num_bits) {
+                    break;
+                }
+            }
+
+            // Return to last matching range.
+            range++;
+            break;
+        }
+    }
+    // We now have enough to decode our integer sequence.
+    // InputBitStream colorStream(data);
+    DecodeIntegerSequence(range, num_values);
+
+    
+    // Once we have the decoded values, we need to dequantize them to the 0-255 range
+    // This procedure is outlined in ASTC spec C.2.13
+    uint out_index = 0;
+    for (int itr = 0; itr <= color_index; itr++) {
+        // Have we already decoded all that we need?
+        if (out_index >= num_values) {
+            break;
+        }
+
+        EncodingData val = result_vector[itr];
+        uint bitlen = val.num_bits;
+        uint bitval = val.bit_value;
+        
+        uint A = 0, B = 0, C = 0, D = 0;
+        // A is just the lsb replicated 9 times.
+        A = ReplicateBitTo9((bitval & 1));
+
+        
+        switch (val.encoding) {
+        // Replicate bits
+        case JustBits:
+            color_values[out_index++] = ReplicateBitToN(8, bitval);
+            break;
+
+        
+        // Use algorithm in C.2.13
+        case Trit: {
+            D = val.qus32_trit_value;
+            switch (bitlen) {
+            case 1: {
+                C = 204;
+            } break;
+
+            case 2: {
+                C = 93;
+                // B = b000b0bb0
+                uint b = (bitval >> 1) & 1;
+                B = (b << 8) | (b << 4) | (b << 2) | (b << 1);
+            } break;
+
+            case 3: {
+                C = 44;
+                // B = cb000cbcb
+                uint cb = (bitval >> 1) & 3;
+                B = (cb << 7) | (cb << 2) | cb;
+            } break;
+
+            case 4: {
+                C = 22;
+                // B = dcb000dcb
+                uint dcb = (bitval >> 1) & 7;
+                B = (dcb << 6) | dcb;
+            } break;
+
+            case 5: {
+                C = 11;
+                // B = edcb000ed
+                uint edcb = (bitval >> 1) & 0xF;
+                B = (edcb << 5) | (edcb >> 2);
+            } break;
+
+            case 6: {
+                C = 5;
+                // B = fedcb000f
+                uint fedcb = (bitval >> 1) & 0x1F;
+                B = (fedcb << 4) | (fedcb >> 4);
+            } break;
+
+            default:
+                //assert(false && "Unsupported trit encoding for color values!");
+                break;
+            } 
+        }     
+        break;
+
+        case Qus32: {
+
+            D = val.qus32_trit_value;
+
+            switch (bitlen) {
+            case 1: {
+                C = 113;
+            } break;
+
+            case 2: {
+                C = 54;
+                // B = b0000bb00
+                uint b = (bitval >> 1) & 1;
+                B = (b << 8) | (b << 3) | (b << 2);
+            } break;
+
+            case 3: {
+                C = 26;
+                // B = cb0000cbc
+                uint cb = (bitval >> 1) & 3;
+                B = (cb << 7) | (cb << 1) | (cb >> 1);
+            } break;
+
+            case 4: {
+                C = 13;
+                // B = dcb0000dc
+                uint dcb = (bitval >> 1) & 7;
+                B = (dcb << 6) | (dcb >> 1);
+            } break;
+
+            case 5: {
+                C = 6;
+                // B = edcb0000e
+                uint edcb = (bitval >> 1) & 0xF;
+                B = (edcb << 5) | (edcb >> 3);
+            } break;
+
+            default:
+                // assert(false && "Unsupported quint encoding for color values!");
+                break;
+            } 
+        }     
+        break;
+        }
+        
+        if (val.encoding != JustBits) {
+            uint T = D * C + B;
+            T ^= A;
+            T = (A & 0x80) | (T >> 2);
+            color_values[out_index++] = T;
+        }
+    }
+    
+    // Make sure that each of our values is in the proper range...
+    for (int i = 0; i < num_values; i++) {
+        // assert(out[i] <= 255);
+        if (color_values[i] > 255) {
+            for (uint j = 0; j < 4; j++) {
+                for (uint i = 0; i < 4; i++) {
+                    // imageStore(dest_image, ivec2(6,0) + ivec2(i,j) , vec4(0.565, 0.933, 0.1565, 0.25));
+                }
+            }
+        }
+    }
+}
+
+// Transfers a bit as described in C.2.14
+void BitTransferSigned(out int a, out int b) {
+    b >>= 1;
+    b |= a & 0x80;
+    a >>= 1;
+    a &= 0x3F;
+    if ((a & 0x20) != 0)
+        a -= 0x40;
+}
+// Clamps the pixel to the range [0,255]
+void ClampByte(out uvec4 color) {
+    for (uint i = 0; i < 4; i++) {
+        color[i] = (color[i] < 0) ? 0 : ((color[i] > 255) ? 255 : color[i]);
+    }
+}
+
+
+// Adds more precision to the blue channel as described
+// in C.2.14
+uvec4 BlueContract(uint a, uint r, uint g, uint b) {
+    return uvec4(a, (r + b) >> 1, (g + b) >> 1, b);
+}
+
+
+// Section C.2.14
+int colvals_index = 0;
+void ComputeEndpoints(out uvec4 ep1, out uvec4 ep2, uint color_values[32],
+                             uint color_endpoint_mode) {
+#define READ_UINT_VALUES(N) uint v[N]; for (uint i = 0; i < N; i++) {v[i] = color_values[colvals_index++];}
+
+#define READ_INT_VALUES(N) int v[N]; for (uint i = 0; i < N; i++) { v[i] = int(color_values[colvals_index++]);}
+
+    switch (color_endpoint_mode) {
+    case 0: {
+        READ_UINT_VALUES(2)
+        ep1 = uvec4(0xFF, v[0], v[0], v[0]);
+        ep2 = uvec4(0xFF, v[1], v[1], v[1]);
+    } break;
+
+    case 1: {
+        READ_UINT_VALUES(2)
+        uint L0 = (v[0] >> 2) | (v[1] & 0xC0);
+        uint L1 = max(L0 + (v[1] & 0x3F), 0xFFU);
+        ep1 = uvec4(0xFF, L0, L0, L0);
+        ep2 = uvec4(0xFF, L1, L1, L1);
+    } break;
+
+    case 4: {
+        READ_UINT_VALUES(4)
+        ep1 = uvec4(v[2], v[0], v[0], v[0]);
+        ep2 = uvec4(v[3], v[1], v[1], v[1]);
+    } break;
+
+    case 5: {
+        READ_INT_VALUES(4)
+        BitTransferSigned(v[1], v[0]);
+        BitTransferSigned(v[3], v[2]);
+        ep1 = uvec4(v[2], v[0], v[0], v[0]);
+        ep2 = uvec4(v[2] + v[3], v[0] + v[1], v[0] + v[1], v[0] + v[1]);
+        ClampByte(ep1);
+        ClampByte(ep1);
+    } break;
+
+    case 6: {
+        READ_UINT_VALUES(4)
+        ep1 = uvec4(0xFF, v[0] * v[3] >> 8, v[1] * v[3] >> 8, v[2] * v[3] >> 8);
+        ep2 = uvec4(0xFF, v[0], v[1], v[2]);
+    } break;
+
+    case 8: {
+        READ_UINT_VALUES(6)
+        if (v[1] + v[3] + v[5] >= v[0] + v[2] + v[4]) {
+            ep1 = uvec4(0xFF, v[0], v[2], v[4]);
+            ep2 = uvec4(0xFF, v[1], v[3], v[5]);
+        } else {
+            ep1 = BlueContract(0xFF, v[1], v[3], v[5]);
+            ep2 = BlueContract(0xFF, v[0], v[2], v[4]);
+        }
+    } break;
+
+    case 9: {
+        READ_INT_VALUES(6)
+        BitTransferSigned(v[1], v[0]);
+        BitTransferSigned(v[3], v[2]);
+        BitTransferSigned(v[5], v[4]);
+        if (v[1] + v[3] + v[5] >= 0) {
+            ep1 = uvec4(0xFF, v[0], v[2], v[4]);
+            ep2 = uvec4(0xFF, v[0] + v[1], v[2] + v[3], v[4] + v[5]);
+        } else {
+            ep1 = BlueContract(0xFF, v[0] + v[1], v[2] + v[3], v[4] + v[5]);
+            ep2 = BlueContract(0xFF, v[0], v[2], v[4]);
+        }
+        ClampByte(ep1);
+        ClampByte(ep2);
+    } break;
+
+    case 10: {
+        READ_UINT_VALUES(6)
+        ep1 = uvec4(v[4], v[0] * v[3] >> 8, v[1] * v[3] >> 8, v[2] * v[3] >> 8);
+        ep2 = uvec4(v[5], v[0], v[1], v[2]);
+    } break;
+
+    case 12: {
+        READ_UINT_VALUES(8)
+        if (v[1] + v[3] + v[5] >= v[0] + v[2] + v[4]) {
+            ep1 = uvec4(v[6], v[0], v[2], v[4]);
+            ep2 = uvec4(v[7], v[1], v[3], v[5]);
+        } else {
+            ep1 = BlueContract(v[7], v[1], v[3], v[5]);
+            ep2 = BlueContract(v[6], v[0], v[2], v[4]);
+        }
+    } break;
+
+    case 13: {
+        READ_INT_VALUES(8)
+        BitTransferSigned(v[1], v[0]);
+        BitTransferSigned(v[3], v[2]);
+        BitTransferSigned(v[5], v[4]);
+        BitTransferSigned(v[7], v[6]);
+        if (v[1] + v[3] + v[5] >= 0) {
+            ep1 = uvec4(v[6], v[0], v[2], v[4]);
+            ep2 = uvec4(v[7] + v[6], v[0] + v[1], v[2] + v[3], v[4] + v[5]);
+        } else {
+            ep1 = BlueContract(v[6] + v[7], v[0] + v[1], v[2] + v[3], v[4] + v[5]);
+            ep2 = BlueContract(v[6], v[0], v[2], v[4]);
+        }
+        ClampByte(ep1);
+        ClampByte(ep2);
+    } break;
+
+    default:
+        //assert(false && "Unsupported color endpoint mode (is it HDR?)");
+        break;
+    }
+
+#undef READ_UINT_VALUES
+#undef READ_INT_VALUES
+}
+
+
+uint UnquantizeTexelWeight(out EncodingData val) {
+    uint bitval = val.bit_value;
+    uint bitlen = val.num_bits;
+
+    uint A = ReplicateBitTo7((bitval & 1));
+    uint B = 0, C = 0, D = 0;
+
+    uint result = 0;
+    switch (val.encoding) {
+    case JustBits:
+        result = FastReplicateTo6(bitval, bitlen);
+        break;
+
+    case Trit: {
+        D = val.qus32_trit_value;
+        //assert(D < 3);
+
+        switch (bitlen) {
+        case 0: {
+            uint results[3] = {0, 32, 63};
+            result = results[D];
+        } break;
+
+        case 1: {
+            C = 50;
+        } break;
+
+        case 2: {
+            C = 23;
+            uint b = (bitval >> 1) & 1;
+            B = (b << 6) | (b << 2) | b;
+        } break;
+
+        case 3: {
+            C = 11;
+            uint cb = (bitval >> 1) & 3;
+            B = (cb << 5) | cb;
+        } break;
+
+        default:
+            // assert(false && "Invalid trit encoding for texel weight");
+            break;
+        }
+    } break;
+
+    case Qus32: {
+        D = val.qus32_trit_value;
+        // assert(D < 5);
+
+        switch (bitlen) {
+        case 0: {
+            uint results[5] = {0, 16, 32, 47, 63};
+            result = results[D];
+        } break;
+
+        case 1: {
+            C = 28;
+        } break;
+
+        case 2: {
+            C = 13;
+            uint b = (bitval >> 1) & 1;
+            B = (b << 6) | (b << 1);
+        } break;
+
+        default:
+            // assert(false && "Invalid quint encoding for texel weight");
+            break;
+        }
+    } break;
+    }
+
+    if (val.encoding != JustBits && bitlen > 0) {
+        // Decode the value...
+        result = D * C + B;
+        result ^= A;
+        result = (A & 0x20) | (result >> 2);
+    }
+
+    // assert(result < 64);
+
+    // Change from [0,63] to [0,64]
+    if (result > 32) {
+        result += 1;
+    }
+
+    return result;
+}
+
+void UnquantizeTexelWeights(out uint outbuffer[2][144], 
+                                   bool dual_plane, uvec2 size, 
+                                   uint blockWidth,
+                                   uint blockHeight) {
+    uint weight_idx = 0;
+    uint unquantized[2][144];
+
+    for (uint itr = 0; itr <= texel_vector_index; itr++) {
+        unquantized[0][weight_idx] = UnquantizeTexelWeight(texel_vector[itr]);
+
+        if (dual_plane) {
+            ++itr;
+            unquantized[1][weight_idx] = UnquantizeTexelWeight(texel_vector[itr]);
+            if (itr == texel_vector_index+1) {
+                break;
+            }
+        }
+
+        if (++weight_idx >= (size.x * size.y))
+            break;
+    }
+
+    // Do infill if necessary (Section C.2.18) ...
+    uint Ds = (1024 + (blockWidth / 2)) / (blockWidth - 1);
+    uint Dt = (1024 + (blockHeight / 2)) / (blockHeight - 1);
+
+    uint kPlaneScale = dual_plane ? 2U : 1U;
+    for (uint plane = 0; plane < kPlaneScale; plane++)
+        for (uint t = 0; t < blockHeight; t++)
+            for (uint s = 0; s < blockWidth; s++) {
+                uint cs = Ds * s;
+                uint ct = Dt * t;
+
+                uint gs = (cs * (size.x - 1) + 32) >> 6;
+                uint gt = (ct * (size.y - 1) + 32) >> 6;
+
+                uint js = gs >> 4;
+                uint fs = gs & 0xF;
+
+                uint jt = gt >> 4;
+                uint ft = gt & 0x0F;
+
+                uint w11 = (fs * ft + 8) >> 4;
+                uint w10 = ft - w11;
+                uint w01 = fs - w11;
+                uint w00 = 16 - fs - ft + w11;
+
+                uint v0 = js + jt * size.x;
+
+#define FIND_TEXEL(tidx, bidx) uint p##bidx = 0; do { if (tidx < (size.x * size.y)) {p##bidx = unquantized[plane][tidx];}} while (false)
+                FIND_TEXEL(v0, 00);
+                FIND_TEXEL(v0 + 1, 01);
+                FIND_TEXEL(v0 + size.x, 10);
+                FIND_TEXEL(v0 + size.x + 1, 11);
+
+#undef FIND_TEXEL
+
+                outbuffer[plane][t * blockWidth + s] =
+                    (p00 * w00 + p01 * w01 + p10 * w10 + p11 * w11 + 8) >> 4;
+            }
+}
+
+int FindLayout(uint mode) {
+    if ((mode & 3) != 0) {
+        if ((mode & 8) != 0) {
+            if ((mode & 4) != 0) {
+                if ((mode & 0x100) != 0) {
+                    return 4;
+                }
+                return 3;
+            }
+            return 2;
+        }
+        if ((mode & 4) != 0) {
+            return 1;
+        }
+        return 0;
+    }
+    if ((mode & 0x100) != 0) {
+        if ((mode & 0x80) != 0) {
+            // (mode & 0x40) != 0 -> error
+            if ((mode & 0x20) != 0) {
+                return 8;
+            }
+            return 7;
+        }
+        return 9;
+    }
+    if ((mode & 0x80) != 0) {
+        return 6;
+    }
+    return 5;
+}
+
+int DecodeBlockInfo(uint block_index, out uvec2 size, out int max_weight, out bool dual_plane) {
+    // uint first_word = ReadWord(block_index, 0);
+    // uint mode = bitfieldExtract(first_word, 0, 11);
+    uint mode = StreamBits(11);
+    // Void extent
+    if (mode == 0x333){
+        for (uint j = 0; j < 4; j++) {
+        for (uint i = 0; i < 4; i++) {
+            // imageStore(dest_image, ivec2(6,0) + ivec2(i,j) , vec4(1));
+        }
+    }
+    }
+    if ((mode & 0x1ff) == 0x1fc) {
+        if ((mode & 0x400) == 0 || StreamBits(1) == 0) {
+            return BLOCK_INFO_ERROR;
+        }
+        return (mode & 0x200) != 0 ? BLOCK_INFO_VOID_EXTENT_HDR : BLOCK_INFO_VOID_EXTENT_LDR;
+    }
+
+    if ((mode & 0xf) == 0) {
+        return BLOCK_INFO_ERROR;
+    }
+
+    // Check for more reserved modes
+    if ((mode & 3) == 0 && (mode & 0x1c0) == 0x1c0) {
+        return BLOCK_INFO_ERROR;
+    }
+
+    uint mode_layout = FindLayout(mode);
+    switch (mode_layout) {
+    case 0:
+        size.x = bitfieldExtract(mode, 7, 2) + 4;
+        size.y = bitfieldExtract(mode, 5, 2) + 2;
+        break;
+    case 1:
+        size.x = bitfieldExtract(mode, 7, 2) + 8;
+        size.y = bitfieldExtract(mode, 5, 2) + 2;
+        break;
+    case 2:
+        size.x = bitfieldExtract(mode, 5, 2) + 2;
+        size.y = bitfieldExtract(mode, 7, 2) + 8;
+        break;
+    case 3:
+        size.x = bitfieldExtract(mode, 5, 2) + 2;
+        size.y = bitfieldExtract(mode, 7, 1) + 6;
+        break;
+    case 4:
+        size.x = bitfieldExtract(mode, 7, 1) + 2;
+        size.y = bitfieldExtract(mode, 5, 2) + 2;
+        break;
+    case 5:
+        size.x = 12;
+        size.y = bitfieldExtract(mode, 5, 2) + 2;
+        break;
+    case 6:
+        size.x = bitfieldExtract(mode, 5, 2) + 2;
+        size.y = 12;
+        break;
+    case 7:
+        size = ivec2(6, 10);
+        break;
+    case 8:
+        size = ivec2(10, 6);
+        break;
+    case 9:
+        size.x = bitfieldExtract(mode, 5, 2) + 6;
+        size.y = bitfieldExtract(mode, 9, 2) + 6;
+        break;
+    default:
+        return BLOCK_INFO_ERROR;
+    }
+
+    dual_plane = (mode_layout != 9) && (mode & 0x400) != 0;
+
+    uint weight_index = (mode & 0x10) != 0 ? 1 : 0;
+    if (mode_layout < 5) {
+        weight_index |= (mode & 0x3) << 1;
+    }
+    else {
+        weight_index |= (mode & 0xc) >> 1;
+    }
+    weight_index -= 2;
+
+    if ((mode_layout != 9) && (mode & 0x200) != 0) {
+        const int max_weights[6] = int[6](9, 11, 15, 19, 23, 31);
+        max_weight = max_weights[weight_index];
+    }
+    else {
+        const int max_weights[6] = int[6](1, 2, 3, 4, 5, 7);
+        max_weight = max_weights[weight_index];
+    }
+}
+
+
+void FillError(ivec3 coord) {
+    // imageStore(dest_image, coord.xy, vec4(1.0, 1.0, 0.0, 1.0));
+}
+
+void FillVoidExtentLDR(ivec3 coord, uint block_index) {
+    for (int i = 0; i < 4; i++) {
+        StreamBits(13);
+    }
+    // Decode the RGBA components and renormalize them to the range [0, 255]
+    uint r = StreamBits(16);
+    uint g = StreamBits(16);
+    uint b = StreamBits(16);
+    uint a = StreamBits(16);
+
+    for (uint j = 0; j < 4; j++) {
+        for (uint i = 0; i < 4; i++) {
+            //// imageStore(dest_image, coord.xy + ivec2(i,j) , vec4((r >> 8), (g & 0xFF00) , (b & 0xFF00) << 8, (a & 0xFF00) << 16));
+            // imageStore(dest_image, coord.xy + ivec2(i,j) , vec4(1));
+        }
+    }
+}
+
+void DecompressBlock(ivec3 coord, uint block_index) {
+    uvec2 size;
+    int max_weight;
+    bool dual_plane;
+    switch (DecodeBlockInfo(block_index, size, max_weight, dual_plane)) {
+    case BLOCK_INFO_ERROR:
+        FillError(coord);
+        return;
+    case BLOCK_INFO_VOID_EXTENT_HDR:
+        // Not supported
+        FillError(coord);
+        return;
+    case BLOCK_INFO_VOID_EXTENT_LDR:
+        FillVoidExtentLDR(coord, block_index);
+        return;
+    case BLOCK_INFO_NORMAL:
+        // imageStore(dest_image, coord.xy, vec4(0.0, 0.68, 0.0, 1.0));
+        break;
+    }
+    // imageStore(dest_image, coord.xy, vec4(0.0, 0.0, 0.950, 1.0));
+    // return;
+    // Make sure we are inside the grid
+    if (size.x > BLOCK_SIZE_IN_TEXELS.x || size.y > BLOCK_SIZE_IN_TEXELS.y) {
+        FillError(coord);
+        return;
+    }
+
+    // uint first_word = 0xFFFF;
+    uint num_partitions = StreamBits(2) + 1;
+    if (num_partitions > 4 || (num_partitions == 4 && dual_plane)) {
+        // Dual plane mode is incompatible with four partition blocks
+        FillError(coord);
+        return;
+    }
+    if (num_partitions == 1){
+    for (uint j = 0; j < 4; j++) {
+        for (uint i = 0; i < 4; i++) {
+            // imageStore(dest_image, coord.xy + ivec2(i,j) , vec4(0.565, 0.933, 0.1565, 0.25));
+        }
+    }
+    }
+
+    // Determine partitions, partition index, and color endpoint modes
+    int plane_index = -1;
+    uint partition_index = 1;
+    uvec4 color_endpoint_mode = uvec4(0);
+    
+    // color endpoint data pointer
+    uint ced_pointer = 0;
+
+    uint base_cem = 0;
+
+    if (num_partitions == 1) {
+        color_endpoint_mode[0] = StreamBits(4);
+        partition_index = 0;
+    }
+    else {
+        partition_index = StreamBits(10);
+        base_cem = StreamBits(6);
+    }
+    uint base_mode = base_cem & 3;
+
+    // Remaining bits are color endpoint data...
+    uint weight_bits = GetPackedBitSize(size, dual_plane, max_weight);
+    uint remaining_bits = 128 - weight_bits - total_bitsread;
+
+    if (weight_bits == 0x5a || remaining_bits == 0x15){
+    for (uint j = 0; j < 4; j++) {
+        for (uint i = 0; i < 4; i++) {
+            // imageStore(dest_image, coord.xy + ivec2(i,j) , vec4(1, 0,0, 0.25));
+        }
+    }
+    }
+
+    // Consider extra bits prior to texel data...
+    uint extra_cem_bits = 0;
+    if (base_mode > 0) {
+        switch (num_partitions) {
+        case 2:
+            extra_cem_bits += 2;
+            break;
+        case 3:
+            extra_cem_bits += 5;
+            break;
+        case 4:
+            extra_cem_bits += 8;
+            break;
+        default:
+        // This was an assert(false) in cpp code
+            return;
+        }
+    }
+    remaining_bits -= extra_cem_bits;
+    
+    // Do we have a dual plane situation?
+    uint plane_selector_bits = 0;
+    if (dual_plane) {
+        plane_selector_bits = 2;
+    }
+    remaining_bits -= plane_selector_bits;
+
+
+    
+    // Read color data...
+    uint color_data_bits = remaining_bits;
+    while (remaining_bits > 0) {
+         uint nb = min(remaining_bits, 8);
+         uint b = StreamBits(nb);
+
+         //for (uint i = 0; i < nb; i++) {
+             // may need to rewrite WriteBits method.
+         color_endpoint_data[ced_pointer] = uint8_t(bitfieldExtract(b, 0, 8));
+         ced_pointer++;
+         //}
+         remaining_bits -= nb;
+    }
+         
+    if (color_endpoint_data[1] == uint8_t(0x8e)) {
+    for (uint j = 0; j < 4; j++) {
+        for (uint i = 0; i < 4; i++) {
+            // imageStore(dest_image, coord.xy + ivec2(i,j) , vec4(1, 0.5,1, 1.0));
+        }
+    }
+    }
+    // return;
+
+    // Read the plane selection bits
+    plane_index = int(StreamBits(plane_selector_bits));
+    
+    // Read the rest of the CEM
+    if (base_mode > 0) {
+        uint extra_cem = StreamBits(extra_cem_bits);
+        uint cem = (extra_cem << 6) | base_cem;
+        cem >>= 2;
+    
+        uint C[4] = {0,0,0,0};
+        for (uint i = 0; i < num_partitions; i++) {
+            C[i] = cem & 1;
+            cem >>= 1;
+        }
+    
+        uint M[4] = {0,0,0,0 };
+        for (uint i = 0; i < num_partitions; i++) {
+            M[i] = cem & 3;
+            cem >>= 2;
+            // assert(M[i] <= 3);
+        }
+    
+        for (uint i = 0; i < num_partitions; i++) {
+            color_endpoint_mode[i] = base_mode;
+            if ((C[i]) > 0) {
+                color_endpoint_mode[i] -= 1;
+            }
+            color_endpoint_mode[i] <<= 2;
+            color_endpoint_mode[i] |= M[i];
+        }
+    }  else if (num_partitions > 1) {
+        uint cem = base_cem >> 2;
+        for (uint i = 0; i < num_partitions; i++) {
+            color_endpoint_mode[i] = cem;
+        }
+     } 
+
+    // Make sure everything up till here is sane.
+    vec4 out_col;
+    for (uint i = 0; i < num_partitions; i++) {
+        if (color_endpoint_mode[i] >= 16) {
+            out_col = vec4(1.0);
+            break;  // ERROR
+        } else {
+            out_col = vec4(0.0,1.0,1.0,1.0);    // CYaN BLUE No Errors 
+        }
+    }
+
+    if(GetPackedBitSize(size, dual_plane, max_weight) + total_bitsread != 128) {
+        out_col = vec4(1.0);
+    }
+
+    for (uint j = 0; j < 4; j++) {
+        for (uint i = 0; i < 4; i++) {
+            // imageStore(dest_image, coord.xy + ivec2(i,j) , out_col);
+        }
+    }
+
+    // Decode both color data and texel weight data
+    uint color_values[32]; // Four values, two endpoints, four maximum paritions
+    DecodeColorValues(color_values, color_endpoint_mode, num_partitions, color_data_bits);
+
+    // Pixel( a r g b depth)
+    uvec4 endpoints[4][2];
+    for (uint i = 0; i < num_partitions; i++) {
+        ComputeEndpoints(endpoints[i][0], endpoints[i][1], color_values, color_endpoint_mode[i]);
+    }
+
+    
+    // Read the texel weight data..
+    uint8_t texel_weight_data[16];
+    for (uint i = 0; i < 16; i++) {
+        texel_weight_data[i] = local_buff[i];
+    }
+
+    // Reverse everything
+    for (uint i = 0; i < 8; i++) {
+// Taken from http://graphics.stanford.edu/~seander/bithacks.html#ReverseByteWith64Bits
+// #define REVERSE_BYTE(b) (((b)*0x80200802ULL) & 0x0884422110ULL) * 0x0101010101ULL >> 32
+//#define REVERSE_BYTE(b) ((uint(b)*0x80200802) & 0x0884422110) * 0x0101010101 >> 32
+        uint a = reverse(texel_weight_data[i]);
+        uint b = reverse(texel_weight_data[15 - i]);
+//#undef REVERSE_BYTE
+
+        texel_weight_data[i] = uint8_t(bitfieldExtract(b, 0, 8));
+        texel_weight_data[15 - i] = uint8_t(bitfieldExtract(a, 0, 8));
+    }
+
+    
+    // Make sure that higher non-texel bits are set to zero
+    uint clear_byte_start = (GetPackedBitSize(size, dual_plane, max_weight) >> 3) + 1;
+    texel_weight_data[clear_byte_start - 1] =
+        texel_weight_data[clear_byte_start - 1] &
+        uint8_t(((1 << (GetPackedBitSize(size, dual_plane, max_weight) % 8)) - 1));
+    
+    //memset(texelWeightData + clearByteStart, 0, 16 - clearByteStart);
+    for (uint i = 0; i < 16 - clear_byte_start; i++) {
+        texel_weight_data[clear_byte_start + i] = uint8_t(0);
+    }
+    texel_flag = true;  // use texel "vector" and bit stream in integer decoding
+    DecodeIntegerSequence(max_weight, GetNumWeightValues(size, dual_plane));
+
+
+    uint weights[2][144];
+    UnquantizeTexelWeights(weights, dual_plane, size, 6, 6);
+    uint blockHeight = 6;
+    uint blockWidth = 6;
+    // Now that we have endpoints and weights, we can s32erpolate and generate
+    // the proper decoding...
+    for (uint j = 0; j < blockHeight; j++) {
+        for (uint i = 0; i < blockWidth; i++) {
+            uint local_partition = Select2DPartition(partition_index, i, j, num_partitions,
+                                                (blockHeight * blockWidth) < 32);
+            // assert(partition < num_partitions);
+
+            //Pixel p;
+            uvec4 p;
+            for (uint c = 0; c < 1; c++) {
+                uint C0 = endpoints[local_partition][0][c];
+                C0 = ReplicateByteTo16(C0);
+                uint C1 = endpoints[local_partition][1][c];
+                C1 = ReplicateByteTo16(C1);
+                if (endpoints[local_partition][0][c] != 0xFF || endpoints[local_partition][1][c] != 0xFF) {
+                    imageStore(dest_image, coord.xy + ivec2(i,j) , vec4(255,0,0,255));
+                }
+
+                if (C0 != 0xFFFF || C1 != 0xFFFF) {
+                    imageStore(dest_image, coord.xy + ivec2(i,j) , vec4(255,0,0,255));
+                }
+
+                uint plane = 0;
+                if (dual_plane && (((plane_index + 1) & 3) == c)) {
+                    plane = 1;
+                }
+
+                uint weight = weights[plane][j * blockWidth + i];
+                if (weight != 0x30 || weight != 0x2e) {
+                    imageStore(dest_image, coord.xy + ivec2(i,j) , vec4(255,0,0,255));
+                }
+                uint C = (C0 * (64 - weight) + C1 * weight + 32) / 64;
+                if (C == 65535) {
+                    p[c] = 255;
+                }
+                else {
+                    double Cf = double(C);
+                    p[c] = uint(255.0 * (Cf / 65536.0) + 0.5);
+                }
+                if (C != 0xFFFF) {
+                    imageStore(dest_image, coord.xy + ivec2(i,j) , vec4(255,0,0,255));
+                }
+            }
+
+            //outBuf[j * blockWidth + i] = p.Pack();
+            //imageStore(dest_image, coord.xy + ivec2(i,j) , p.gbar);
+            if (p.r != 255 || p.g != 131 || p.b != 131 || p.a != 131) {
+                //imageStore(dest_image, coord.xy + ivec2(i,j) , vec4(255,0,0,255));
+            }
+        }
+    }
+}
+
+void main() {
+    ivec3 coord = ivec3(gl_GlobalInvocationID) * BLOCK_SIZE_IN_TEXELS;
+    uint img_area = image_size.x * image_size.y;
+    uint block_index =
+        gl_GlobalInvocationID.z * num_image_blocks.x * num_image_blocks.y +
+        gl_GlobalInvocationID.y * num_image_blocks.x +
+        gl_GlobalInvocationID.x;
+    current_index = 0;
+    bitsread = 0;
+    if (block_index != 1) {
+        return;
+    }
+    for (int i = 0; i < 16; i++) {
+        local_buff[i] = astc_data[block_index * BLOCK_SIZE_IN_BYTES + i];
+        // local_buff[i] = uint8_t(1);
+    }
+    // uint word = StreamBits(32);
+    if (FastReplicateTo6(0x14, 5) != 0x29){
+        for (uint j = 0; j < 4; j++) {
+            for (uint i = 0; i < 4; i++) {
+                imageStore(dest_image, coord.xy + ivec2(i,j) , vec4(1,1,0, 1));
+            }
+        }
+    }
+    // else if (coord.x < 128 && block_index == 1){
+    //     //if (word == (0x17e6bb25) ) {
+    //     if (word == (0x25bbe617) ) {
+    //     for (uint j = 0; j < 4; j++) {
+    //         for (uint i = 0; i < 4; i++) {
+    //             // imageStore(dest_image, coord.xy + ivec2(i,j) , vec4(1,0,0, 1));
+    //         }
+    //     }
+    //     }
+    // } else if (coord.x < 128 && block_index == 2){
+    //     // if (word == (0xc49b4148) ) {
+    //     if (word == (0x48419bc4) ) {
+    //     for (uint j = 0; j < 4; j++) {
+    //         for (uint i = 0; i < 4; i++) {
+    //             // imageStore(dest_image, coord.xy + ivec2(i,j) , vec4(1,0,0, 1));
+    //         }
+    //     }
+    //     }
+    // }
+    //  else if (coord.x < 128 && current_index == 1 && read_bits == 21) {
+    //     for (uint j = 0; j < 4; j++) {
+    //         for (uint i = 0; i < 4; i++) {
+    //             // imageStore(dest_image, coord.xy + ivec2(i,j) , vec4(0,0,1, 1));
+    //         }
+    //     }
+    // }
+    // else {
+    //     for (uint j = 0; j < 4; j++) {
+    //         for (uint i = 0; i < 4; i++) {
+    //             // imageStore(dest_image, coord.xy + ivec2(i,j) , vec4(0.565, 0.933, 0.1565, 1));
+    //         }
+    //     }
+    // }
+    // return;
+    //DecompressBlock(coord, block_index);
+}

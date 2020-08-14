@@ -24,6 +24,8 @@ public:
 	void SetUniform1i(const std::string& name, int value);
 	void SetUniformMat4f(const std::string& name, const glm::mat4 matrix);
 	void SetUniform4f(const std::string& name, float v0, float v1, float v2, float v3);
+	void SetUniform3u(const std::string& name, uint32_t v0, uint32_t v1, uint32_t v2);
+	void SetUniform2u(const std::string& name, uint32_t v0, uint32_t v1);
 private:
 	unsigned int GetUniformLocation(const  std::string& name);
 	//bool CompileShader();
