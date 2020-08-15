@@ -39,7 +39,7 @@ struct IntegerEncodedValue {
 		else if (encoding == IntegerEncoding::Qus32) {
 			totalBits += (nVals * 7 + 2) / 3;
 		}
-		printf("totalBits: %u   num_bits: %u\n", totalBits, num_bits);
+		// printf("totalBits: %u   num_bits: %u\n", totalBits, num_bits);
 
 		return totalBits;
 	}

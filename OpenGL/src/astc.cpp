@@ -303,7 +303,7 @@ struct TexelWeightParams {
         if (m_bDualPlane) {
             nIdxs *= 2;
         }
-        //printf("nIdxs: %u   m_MaxWeight: %u\n", nIdxs, m_MaxWeight);
+        //// printf"nIdxs: %u   m_MaxWeight: %u\n", nIdxs, m_MaxWeight);
 
         return EncodingsValues[m_MaxWeight].GetBitLength(nIdxs);
     }
@@ -320,11 +320,11 @@ struct TexelWeightParams {
 static TexelWeightParams DecodeBlockInfo(InputBitStream& strm) {
     TexelWeightParams params;
 
-    printf("Bits read b4 modebits: %u\n", strm.GetBitsRead());
+    // printf"Bits read b4 modebits: %u\n", strm.GetBitsRead());
     // Read the entire block mode all at once
     u16 modeBits = static_cast<u16>(strm.ReadBits<11>());
-    printf("Bits read AFTER modebits: %u\n", strm.GetBitsRead());
-    printf("modebits: %x\n", modeBits);
+    // printf"Bits read AFTER modebits: %u\n", strm.GetBitsRead());
+    // printf"modebits: %x\n", modeBits);
 
     // Does this match the void extent block mode?
     if ((modeBits & 0x01FF) == 0x1FC) {
@@ -522,23 +522,23 @@ static TexelWeightParams DecodeBlockInfo(InputBitStream& strm) {
 static void FillVoidExtentLDR(InputBitStream& strm, u32* const outBuf, u32 blockWidth,
                               u32 blockHeight) {
     // Don't actually care about the void extent, just read the bits...
-    // printf("Bits read b4 4 loop: %ud\n", strm.GetBitsRead());
+    // // printf"Bits read b4 4 loop: %ud\n", strm.GetBitsRead());
     for (s32 i = 0; i < 4; ++i) {
         strm.ReadBits<13>();
     }
-    // printf("Bits read after 4 loop: %ud\n", strm.GetBitsRead());
+    // // printf"Bits read after 4 loop: %ud\n", strm.GetBitsRead());
 
     // Decode the RGBA components and renormalize them to the range [0, 255]
     u16 r = static_cast<u16>(strm.ReadBits<16>());
     u16 g = static_cast<u16>(strm.ReadBits<16>());
     u16 b = static_cast<u16>(strm.ReadBits<16>());
     u16 a = static_cast<u16>(strm.ReadBits<16>());
-    // printf("Bits read after 4 reads: %ud\n", strm.GetBitsRead());
+    // // printf"Bits read after 4 reads: %ud\n", strm.GetBitsRead());
 
     u32 rgba = (r >> 8) | (g & 0xFF00) | (static_cast<u32>(b) & 0xFF00) << 8 |
                (static_cast<u32>(a) & 0xFF00) << 16;
 
-    // printf("GOT r: 0x%X  g: 0x%X  b: 0x%X  a: 0x%X  rgba: 0x%X\n", r, g, b, a, rgba);
+    // // printf"GOT r: 0x%X  g: 0x%X  b: 0x%X  a: 0x%X  rgba: 0x%X\n", r, g, b, a, rgba);
 
     for (u32 j = 0; j < blockHeight; j++) {
         for (u32 i = 0; i < blockWidth; i++) {
@@ -1054,8 +1054,10 @@ static void UnquantizeTexelWeights(u32 out[2][144], const IntegerEncodedVector& 
                                    const u32 blockHeight) {
     u32 weightIdx = 0;
     u32 unquantized[2][144];
-
     for (auto itr = weights.begin(); itr != weights.end(); ++itr) {
+        if (weightIdx == 0xe) {
+            // printf"Here we go\n");
+        }
         unquantized[0][weightIdx] = UnquantizeTexelWeight(*itr);
 
         if (params.m_bDualPlane) {
@@ -1111,7 +1113,34 @@ static void UnquantizeTexelWeights(u32 out[2][144], const IntegerEncodedVector& 
                 FIND_TEXEL(v0 + params.m_Width + 1, 11);
 
 #undef FIND_TEXEL
-
+                u32 area = params.m_Width * params.m_Height;
+                if ((v0) < (area)) {
+                    p00 = unquantized[plane][v0];
+                }
+                else {
+                    p00 = 0;
+                }
+                if ((v0 + 1) < (area)) {
+                    p01 = unquantized[plane][v0 + 1];
+                }
+                else {
+                    p01 = 0;
+                }
+                if ((v0 + params.m_Width) < (area)) {
+                    p10 = unquantized[plane][v0 + params.m_Width];
+                }
+                else {
+                    p10 = 0;
+                }
+                if ((v0 + params.m_Width + 1) < (area)) {
+                    p11 = unquantized[plane][v0 + params.m_Width + 1];
+                }
+                else {
+                    p11 = 0;
+                }
+                if (t == 1 && s == 3) {
+                    // printf"%u, %u, %u, %u, %u, %u, %u, %u\n", p00, p01, p10, p11, w00, w01, w10, w11);
+                }
                 out[plane][t * blockWidth + s] =
                     (p00 * w00 + p01 * w01 + p10 * w10 + p11 * w11 + 8) >> 4;
             }
@@ -1402,7 +1431,7 @@ static void DecompressBlock(const u8 inBuf[16], const u32 blockWidth, const u32 
     u32 nPartitions = strm.ReadBits<2>() + 1;
     assert(nPartitions <= 4);
 
-    printf("numparts: %x\n", nPartitions);
+    // printf"numparts: %x\n", nPartitions);
 
 
     if (nPartitions == 4 && weightParams.m_bDualPlane) {
@@ -1434,12 +1463,12 @@ static void DecompressBlock(const u8 inBuf[16], const u32 blockWidth, const u32 
         baseCEM = strm.ReadBits<6>();
     }
     u32 baseMode = (baseCEM & 3);
-    printf("basemode: %x = %x & 3\n", baseMode, baseCEM);
+    // printf"basemode: %x = %x & 3\n", baseMode, baseCEM);
 
     // Remaining bits are color endpos32 data...
     u32 nWeightBits = weightParams.GetPackedBitSize();
     s32 remainingBits = 128 - nWeightBits - static_cast<s32>(strm.GetBitsRead());
-    printf("nWeightBits: %x remainingbit: %x\n", nWeightBits, remainingBits);
+    // printf"nWeightBits: %x remainingbit: %x\n", nWeightBits, remainingBits);
 
     // Consider extra bits prior to texel data...
     u32 extraCEMbits = 0;
@@ -1460,7 +1489,7 @@ static void DecompressBlock(const u8 inBuf[16], const u32 blockWidth, const u32 
         }
     }
     remainingBits -= extraCEMbits;
-    printf("remainingbit AFTER extra removal: %x\n", remainingBits);
+    // printf"remainingbit AFTER extra removal: %x\n", remainingBits);
 
     // Do we have a dual plane situation?
     u32 planeSelectorBits = 0;
@@ -1468,7 +1497,7 @@ static void DecompressBlock(const u8 inBuf[16], const u32 blockWidth, const u32 
         planeSelectorBits = 2;
     }
     remainingBits -= planeSelectorBits;
-    printf("remainingbit AFTER planeSelectorBits removal: %x\n", remainingBits);
+    // printf"remainingbit AFTER planeSelectorBits removal: %x\n", remainingBits);
 
     // Read color data...
     u32 colorDataBits = remainingBits;
@@ -1478,16 +1507,16 @@ static void DecompressBlock(const u8 inBuf[16], const u32 blockWidth, const u32 
         colorEndpos32Stream.WriteBits(b, nb);
         remainingBits -= 8;
     }
-    //printf("color endpoint[0]: %u\n", colorEndpos32Stream);
+    //// printf"color endpoint[0]: %u\n", colorEndpos32Stream);
 
     // Read the plane selection bits
     planeIdx = strm.ReadBits(planeSelectorBits);
-    printf("planeIdx BITS READ: %u\n", strm.GetBitsRead());
+    // printf"planeIdx BITS READ: %u\n", strm.GetBitsRead());
 
     // Read the rest of the CEM
     if (baseMode) {
         u32 extraCEM = strm.ReadBits(extraCEMbits);
-        printf("EXTRA CEM BITS READ: %u\n", strm.GetBitsRead());
+        // printf"EXTRA CEM BITS READ: %u\n", strm.GetBitsRead());
         u32 CEM = (extraCEM << 6) | baseCEM;
         CEM >>= 2;
 
@@ -1576,15 +1605,15 @@ static void DecompressBlock(const u8 inBuf[16], const u32 blockWidth, const u32 
             u32 partition = Select2DPartition(partitionIndex, i, j, nPartitions,
                 (blockHeight * blockWidth) < 32);
             assert(partition < nPartitions);
-            printf("Select2DPartition components %u, %u, %u, %u\n", partition, partitionIndex, nPartitions, (blockHeight * blockWidth) < 32);
+            // printf"Select2DPartition components %u, %u, %u, %u\n", partition, partitionIndex, nPartitions, (blockHeight * blockWidth) < 32);
             Pixel p;
             for (u32 c = 0; c < 4; c++) {
                 u32 C0 = endpos32s[partition][0].Component(c);
                 C0 = ReplicateByteTo16(C0);
                 u32 C1 = endpos32s[partition][1].Component(c);
                 C1 = ReplicateByteTo16(C1);
-                printf("COMPONENTS: C0 0x%X  C1 0x%X\n", endpos32s[partition][0].Component(c), endpos32s[partition][1].Component(c));
-                printf("C0 0x%X  C1 0x%X\n", C0, C1);
+                // printf"COMPONENTS: C0 0x%X  C1 0x%X\n", endpos32s[partition][0].Component(c), endpos32s[partition][1].Component(c));
+                // printf"C0 0x%X  C1 0x%X\n", C0, C1);
 
                 u32 plane = 0;
                 if (weightParams.m_bDualPlane && (((planeIdx + 1) & 3) == c)) {
@@ -1593,7 +1622,7 @@ static void DecompressBlock(const u8 inBuf[16], const u32 blockWidth, const u32 
 
                 u32 weight = weights[plane][j * blockWidth + i];
                 u32 C = (C0 * (64 - weight) + C1 * weight + 32) / 64;
-                printf("weight 0x%X  C 0x%X\n", weight, C);
+                // printf"weight 0x%X  C 0x%X\n", weight, C);
 
                 if (C == 65535) {
                     p.Component(c) = 255;
@@ -1604,8 +1633,9 @@ static void DecompressBlock(const u8 inBuf[16], const u32 blockWidth, const u32 
                 }
             }
             auto TABLE = MakeReplicateTable<u32, 8, 16>();
-            printf("TAble size: %u\n ", TABLE.size());
-            printf("P components %u, %u, %u, %u\n", p.Component(0), p.Component(1), p.Component(2), p.Component(3));
+            // printf"TAble size: %u\n ", TABLE.size());
+            // printf"P components %x, %x, %x, %x\n", p.Component(0), p.Component(1), p.Component(2), p.Component(3));
+            // printf"P pack %x\n", p.Pack());
             outBuf[j * blockWidth + i] = p.Pack();
         }
     }
@@ -1632,7 +1662,7 @@ std::vector<u8> Decompress(const uint8_t * data, uint32_t width, uint32_t height
             for (u32 i = 0; i < width; i += block_width) {
 
                 const u8* blockPtr = data + blockIdx * 16;
-                if (blockIdx == 1) {
+                if (blockIdx <= 1) {
                     // Blocks can be at most 12x12
                     u32 uncompData[144];
                     ASTCC::DecompressBlock(blockPtr, block_width, block_height, uncompData);
@@ -1650,9 +1680,9 @@ std::vector<u8> Decompress(const uint8_t * data, uint32_t width, uint32_t height
         }
         depth_offset += height * width * 4;
     }
-    if (height * width == 0x10000) {
-        stbi_write_png("output.png", width, height, 4, outData.data(), height * 4);
-    }
+    // if (height * width == 0x10000) {
+    //     stbi_write_png("output.png", width, height, 4, outData.data(), height * 4);
+    // }
     return outData;
 }
 

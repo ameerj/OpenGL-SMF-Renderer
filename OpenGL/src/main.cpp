@@ -68,6 +68,13 @@
 // 
 
 // std::array EncodingsValues = MakeEncodedValues();
+void GLAPIENTRY
+MessageCallback(GLenum source, GLenum type, GLuint id, GLenum severity,
+	GLsizei length, const GLchar* message, const void* userParam) {
+	fprintf(stderr, "GL CALLBACK: %s type = 0x%x, severity = 0x%x, message = %s\n",
+		(type == GL_DEBUG_TYPE_ERROR ? "** GL ERROR **" : ""),
+		type, severity, message);
+}
 
 int main(void){
 	GLFWwindow* window;
@@ -75,7 +82,7 @@ int main(void){
 		return -1;
 
 	/* Create a windowed mode window and its OpenGL context */
-	window = glfwCreateWindow(1280, 720, "Hello World", NULL, NULL);
+	window = glfwCreateWindow(512, 512, "OGL ASTC", NULL, NULL);
 	if (!window){
 		glfwTerminate();
 		return -1;
@@ -136,7 +143,11 @@ int main(void){
 		// rewind(pFile);
 
 		// EncodingsValues[1];
-		
+
+		// // During init, enable debug output
+		// glEnable(GL_DEBUG_OUTPUT);
+		// glDebugMessageCallback(MessageCallback, 0);
+
 		GLuint IMG_ssbo;
 		GLFunc(glGenBuffers(1, &IMG_ssbo));
 		GLFunc(glBindBuffer(GL_SHADER_STORAGE_BUFFER, IMG_ssbo));
@@ -167,8 +178,8 @@ int main(void){
 		Shader c_shader("res/shaders/compute.comp");
 		c_shader.Bind();
 		c_shader.SetUniform3u("image_size", 256, 256, 1);
-		c_shader.SetUniform2u("num_image_blocks", 256/6, 256/6);
-		GLFunc(glDispatchCompute((GLuint)256/6, (GLuint)256/6, 1));
+		c_shader.SetUniform2u("num_image_blocks", 256/6 + 1, 256/6);
+		GLFunc(glDispatchCompute((GLuint)256/6 , (GLuint)256/6, 1));
 
 		// make sure writing to image has finished before read
 		GLFunc(glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT));
@@ -209,10 +220,10 @@ int main(void){
 		//shader.SetUniform4f("u_Color", 0.2f, 0.3f, 0.7f, 1.0f);
 
 		Renderer renderer;
-		ImGui::CreateContext();
-		ImGui_ImplGlfwGL3_Init(window, true);
+		// ImGui::CreateContext();
+		// ImGui_ImplGlfwGL3_Init(window, true);
 		// Setup style
-		ImGui::StyleColorsDark();
+		// ImGui::StyleColorsDark();
 
 		//Texture texture("res/textures/icon.png");
 		// Texture texture("out.png");
@@ -222,7 +233,7 @@ int main(void){
 		float increment = 0.005f;
 		while (!glfwWindowShouldClose(window)) {
 			renderer.Clear();
-			ImGui_ImplGlfwGL3_NewFrame();
+			// ImGui_ImplGlfwGL3_NewFrame();
 			shader.Bind();
 			
 			// object A
@@ -246,13 +257,13 @@ int main(void){
 			else if (r < 0.3f)
 				increment = 0.005f;
 			r += increment;
-			{
-				ImGui::SliderFloat3("Translation", &translationA.x, 0.0f, 960.0f);
-				//ImGui::SliderFloat3("Translation B", &translationB.x, 0.0f, 960.0f);
-				ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
-			}
-			ImGui::Render();
-			ImGui_ImplGlfwGL3_RenderDrawData(ImGui::GetDrawData());
+			// {
+			// 	ImGui::SliderFloat3("Translation", &translationA.x, 0.0f, 960.0f);
+			// 	//ImGui::SliderFloat3("Translation B", &translationB.x, 0.0f, 960.0f);
+			// 	ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
+			// }
+			// ImGui::Render();
+			// ImGui_ImplGlfwGL3_RenderDrawData(ImGui::GetDrawData());
 
 			/* Swap front and back buffers */
 			glfwSwapBuffers(window);
@@ -260,8 +271,8 @@ int main(void){
 			glfwPollEvents();
 		}
 	}
-	ImGui_ImplGlfwGL3_Shutdown();
-	ImGui::DestroyContext();
+	// ImGui_ImplGlfwGL3_Shutdown();
+	// ImGui::DestroyContext();
 	glfwTerminate();
 	return 0;
 }
