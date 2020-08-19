@@ -19,14 +19,23 @@ uint total_bitsread = 0;
 uint8_t local_buff[16];
 
 const int JustBits = 0;
-const int Qus32 = 1;
+const int Quint = 1;
 const int Trit = 2;
 
 struct EncodingData {
     uint encoding;
     uint num_bits;
     uint bit_value;
-    uint qus32_trit_value;
+    uint quint_trit_value;
+};
+
+struct TexelWeightParams {
+    uvec2 size;
+    bool dual_plane;
+    uint max_weight;
+    bool Error;
+    bool VoidExtentLDR;
+    bool VoidExtentHDR;
 };
 
 layout(binding = 1) readonly buffer EncodingsValues {
@@ -38,7 +47,7 @@ layout(std430, binding = 3) readonly buffer  astc_img {
     uint8_t astc_data[];
 };
 
-const ivec3 BLOCK_SIZE_IN_TEXELS = ivec3(6, 6, 1);
+const uvec3 BLOCK_SIZE_IN_TEXELS = ivec3(6, 6, 1);
 const int BLOCK_SIZE_IN_BYTES = 16;
 
 const int BLOCK_INFO_ERROR = 0;
@@ -335,6 +344,7 @@ uint StreamColorBits(uint num_bits) {
     }
     return ret;
 }
+
 EncodingData result_vector[100];
 int result_index = 0;
 
@@ -354,11 +364,11 @@ void ResultEmplaceBack(EncodingData val) {
 }
 
 // Returns the number of bits required to encode nVals values.
-uint GetBitLength(uint n_vals, int encoding_index) {
+uint GetBitLength(uint n_vals, uint encoding_index) {
     uint totalBits = encoding_values[encoding_index].num_bits * n_vals;
     if (encoding_values[encoding_index].encoding == Trit) {
         totalBits += (n_vals * 8 + 4) / 5;
-    } else if (encoding_values[encoding_index].encoding == Qus32) {
+    } else if (encoding_values[encoding_index].encoding == Quint) {
         totalBits += (n_vals * 7 + 2) / 3;
     }
     if (encoding_values[encoding_index].num_bits == uint(5)){
@@ -381,11 +391,12 @@ uint GetNumWeightValues(uvec2 size, bool dual_plane) {
 
 }
 
-uint GetPackedBitSize(uvec2 size, bool dual_plane, int max_weight) {
+uint GetPackedBitSize(uvec2 size, bool dual_plane, uint max_weight) {
     // How many indices do we have?
     uint n_vals = GetNumWeightValues(size, dual_plane);
     return GetBitLength(n_vals, max_weight);
 }
+
 // Bits class operator[]
 uint BitsBracket(uint bits, uint pos) {
     return ((bits >> pos) & 1);
@@ -406,9 +417,8 @@ uint BitsOp(uint bits, uint start, uint end) {
         return ((bits >> start) & mask);
 }
 
-//*
 
-void DecodeQus32Block(uint num_bits) { // Value number of bits
+void DecodeQuintBlock(uint num_bits) { // Value number of bits
    // Implement the algorithm in section C.2.12
    uint m[3];
    uint q[3];
@@ -449,10 +459,10 @@ void DecodeQus32Block(uint num_bits) { // Value number of bits
 
    for (uint i = 0; i < 3; i++) {
        EncodingData val;
-       val.encoding = Qus32;
+       val.encoding = Quint;
        val.num_bits = num_bits;
        val.bit_value = m[i];
-       val.qus32_trit_value = q[i];
+       val.quint_trit_value = q[i];
        ResultEmplaceBack(val);
    }
 }
@@ -514,13 +524,12 @@ void DecodeTritBlock(uint num_bits) {
        val.encoding = Trit;
        val.num_bits = num_bits;
        val.bit_value = m[i];
-       val.qus32_trit_value = t[i];
+       val.quint_trit_value = t[i];
        ResultEmplaceBack(val);
    }
 
 }
 
-//*/
 
 void DecodeIntegerSequence(uint max_range, 
                             uint num_values) {
@@ -529,8 +538,8 @@ void DecodeIntegerSequence(uint max_range,
     uint vals_decoded = 0;
     while (vals_decoded < num_values) {
         switch (val.encoding) {
-        case Qus32:
-            DecodeQus32Block(val.num_bits);
+        case Quint:
+            DecodeQuintBlock(val.num_bits);
             vals_decoded += 3;
             break;
 
@@ -607,7 +616,7 @@ void DecodeColorValues(out uint color_values[32], uvec4 modes, uint num_partitio
         
         // Use algorithm in C.2.13
         case Trit: {
-            D = val.qus32_trit_value;
+            D = val.quint_trit_value;
             switch (bitlen) {
             case 1: {
                 C = 204;
@@ -655,9 +664,9 @@ void DecodeColorValues(out uint color_values[32], uvec4 modes, uint num_partitio
         }     
         break;
 
-        case Qus32: {
+        case Quint: {
 
-            D = val.qus32_trit_value;
+            D = val.quint_trit_value;
 
             switch (bitlen) {
             case 1: {
@@ -701,7 +710,7 @@ void DecodeColorValues(out uint color_values[32], uvec4 modes, uint num_partitio
         }
         
         if (val.encoding != JustBits) {
-            uint T = D * C + B;
+            uint T = (D * C) + B;
             T ^= A;
             T = (A & 0x80) | (T >> 2);
             color_values[out_index++] = T;
@@ -876,7 +885,7 @@ uint UnquantizeTexelWeight(EncodingData val) {
         break;
 
     case Trit: {
-        D = val.qus32_trit_value;
+        D = val.quint_trit_value;
         //assert(D < 3);
 
         switch (bitlen) {
@@ -907,8 +916,8 @@ uint UnquantizeTexelWeight(EncodingData val) {
         }
     } break;
 
-    case Qus32: {
-        D = val.qus32_trit_value;
+    case Quint: {
+        D = val.quint_trit_value;
         // assert(D < 5);
 
         switch (bitlen) {
@@ -957,9 +966,7 @@ void UnquantizeTexelWeights(out uint outbuffer[2][144],
                                    uint blockHeight) {
     uint weight_idx = 0;
     uint unquantized[2][144];
-    uint width = 6;
-    uint height = 3;
-    uint area = width * height;
+    uint area = size.x * size.y;
 
     for (uint itr = 0; itr < texel_vector_index; itr++) {
 
@@ -997,8 +1004,8 @@ void UnquantizeTexelWeights(out uint outbuffer[2][144],
                 uint cs = Ds * s;
                 uint ct = Dt * t;
 
-                uint gs = (cs * (width - 1) + 32) >> 6;
-                uint gt = (ct * (height - 1) + 32) >> 6;
+                uint gs = (cs * (size.x - 1) + 32) >> 6;
+                uint gt = (ct * (size.y - 1) + 32) >> 6;
 
                 uint js = gs >> 4;
                 uint fs = gs & 0xF;
@@ -1011,7 +1018,7 @@ void UnquantizeTexelWeights(out uint outbuffer[2][144],
                 uint w01 = fs - w11;
                 uint w00 = 16 - fs - ft + w11;
 
-                uint v0 = js + (jt * width);
+                uint v0 = js + (jt * size.x);
 
                 uint p00, p01, p10, p11;
 
@@ -1033,13 +1040,13 @@ void UnquantizeTexelWeights(out uint outbuffer[2][144],
                 }else {
                     p01 = 0;
                 }
-                if ((v0 + width) < (area)) {
-                    p10 = unquantized[plane][ (v0 + width) ];
+                if ((v0 + size.x) < (area)) {
+                    p10 = unquantized[plane][ (v0 + size.x) ];
                 }else {
                     p10 = 0;
                 }
-                if ((v0 + width + 1) < (area)) {
-                    p11 = unquantized[plane][ (v0 + width + 1) ];
+                if ((v0 + size.x + 1) < (area)) {
+                    p11 = unquantized[plane][ (v0 + size.x + 1) ];
                 }else {
                     p11 = 0;
                 }
@@ -1100,79 +1107,115 @@ int FindLayout(uint mode) {
     return 5;
 }
 
-int DecodeBlockInfo(uint block_index, out uvec2 size, out int max_weight, out bool dual_plane) {
+TexelWeightParams DecodeBlockInfo(uint block_index) {
+    TexelWeightParams params = TexelWeightParams(
+        uvec2(0), false, 0, false, false, false
+    );
     // uint first_word = ReadWord(block_index, 0);
     // uint mode = bitfieldExtract(first_word, 0, 11);
+    ivec3 coord = ivec3(gl_GlobalInvocationID * BLOCK_SIZE_IN_TEXELS);
     uint mode = StreamBits(11);
     // Void extent
-    if (mode == 0x333){
-        for (uint j = 0; j < 4; j++) {
-        for (uint i = 0; i < 4; i++) {
-            // // imageStore(dest_image, ivec2(6,0) + ivec2(i,j) , vec4(1));
-        }
-    }
-    }
     if ((mode & 0x1ff) == 0x1fc) {
-        if ((mode & 0x400) == 0 || StreamBits(1) == 0) {
-            return BLOCK_INFO_ERROR;
+        if ((mode & 0x200) != 0) {
+            params.VoidExtentHDR = true;
+        } else { 
+            params.VoidExtentLDR = true;
         }
-        return (mode & 0x200) != 0 ? BLOCK_INFO_VOID_EXTENT_HDR : BLOCK_INFO_VOID_EXTENT_LDR;
+        if ((mode & 0x400) == 0 || StreamBits(1) == 0) {
+            params.Error = true;
+        }
+
+        return params;
     }
 
     if ((mode & 0xf) == 0) {
-        return BLOCK_INFO_ERROR;
+        params.Error = true;
+        return params;
     }
-
+    // for (uint j = 0; j < 3; j++) {
+    //     for (uint i = 0; i < 3; i++) {
+    //         imageStore(dest_image, coord.xy + ivec2(i,j), vec4(1.0, 1.0, 0.0, 1.0));
+    //     }
+    // }
     // Check for more reserved modes
     if ((mode & 3) == 0 && (mode & 0x1c0) == 0x1c0) {
-        return BLOCK_INFO_ERROR;
+        params.Error = true;
+        return params;
     }
 
+    // Determine width & height
+    uint A, B;
     uint mode_layout = FindLayout(mode);
     switch (mode_layout) {
     case 0:
-        size.x = bitfieldExtract(mode, 7, 2) + 4;
-        size.y = bitfieldExtract(mode, 5, 2) + 2;
+        A = (mode >> 5) & 0x3;
+        B = (mode >> 7) & 0x3;
+        params.size = uvec2(B + 4,  A + 2);
+        // size.x = bitfieldExtract(mode, 7, 2) + 4;
+        // size.y = bitfieldExtract(mode, 5, 2) + 2;
         break;
     case 1:
-        size.x = bitfieldExtract(mode, 7, 2) + 8;
-        size.y = bitfieldExtract(mode, 5, 2) + 2;
+        A = (mode >> 5) & 0x3;
+        B = (mode >> 7) & 0x3;
+        params.size = uvec2(B + 8,  A + 2);
+        // size.x = bitfieldExtract(mode, 7, 2) + 8;
+        // size.y = bitfieldExtract(mode, 5, 2) + 2;
         break;
     case 2:
-        size.x = bitfieldExtract(mode, 5, 2) + 2;
-        size.y = bitfieldExtract(mode, 7, 2) + 8;
+        A = (mode >> 5) & 0x3;
+        B = (mode >> 7) & 0x3;
+        params.size = uvec2(A + 2,  B + 8);
+        // size.x = bitfieldExtract(mode, 5, 2) + 2;
+        // size.y = bitfieldExtract(mode, 7, 2) + 8;
         break;
     case 3:
-        size.x = bitfieldExtract(mode, 5, 2) + 2;
-        size.y = bitfieldExtract(mode, 7, 1) + 6;
+        A = (mode >> 5) & 0x3;
+        B = (mode >> 7) & 0x1;
+        params.size = uvec2(A + 2, B + 6);
+        // size.x = bitfieldExtract(mode, 5, 2) + 2;
+        // size.y = bitfieldExtract(mode, 7, 1) + 6;
         break;
     case 4:
-        size.x = bitfieldExtract(mode, 7, 1) + 2;
-        size.y = bitfieldExtract(mode, 5, 2) + 2;
+        A = (mode >> 5) & 0x3;
+        B = (mode >> 7) & 0x1;
+        params.size = uvec2(B + 2,  A + 2);
+        // size.x = bitfieldExtract(mode, 7, 1) + 2;
+        // size.y = bitfieldExtract(mode, 5, 2) + 2;
         break;
     case 5:
-        size.x = 12;
-        size.y = bitfieldExtract(mode, 5, 2) + 2;
+        A = (mode >> 5) & 0x3;
+        // uint B = (mode >> 7) & 0x3;
+        params.size = uvec2(12,  A + 2);
+        // size.x = 12;
+        // size.y = bitfieldExtract(mode, 5, 2) + 2;
         break;
     case 6:
-        size.x = bitfieldExtract(mode, 5, 2) + 2;
-        size.y = 12;
+        A = (mode >> 5) & 0x3;
+        // uint B = (mode >> 7) & 0x3;
+        params.size = uvec2(A + 2, 12);
+        // size.x = bitfieldExtract(mode, 5, 2) + 2;
+        // size.y = 12;
         break;
     case 7:
-        size = ivec2(6, 10);
+        params.size = uvec2(6, 10);
         break;
     case 8:
-        size = ivec2(10, 6);
+        params.size = uvec2(10, 6);
         break;
     case 9:
-        size.x = bitfieldExtract(mode, 5, 2) + 6;
-        size.y = bitfieldExtract(mode, 9, 2) + 6;
+        A = (mode >> 5) & 0x3;
+        B = (mode >> 9) & 0x3;
+        params.size = uvec2(A + 6,  B + 6);
+        // size.x = bitfieldExtract(mode, 5, 2) + 6;
+        // size.y = bitfieldExtract(mode, 9, 2) + 6;
         break;
     default:
-        return BLOCK_INFO_ERROR;
+        params.Error = true;
+        break;
     }
 
-    dual_plane = (mode_layout != 9) && (mode & 0x400) != 0;
+    params.dual_plane = (mode_layout != 9) && ((mode & 0x400) != 0);
 
     uint weight_index = (mode & 0x10) != 0 ? 1 : 0;
     if (mode_layout < 5) {
@@ -1183,19 +1226,26 @@ int DecodeBlockInfo(uint block_index, out uvec2 size, out int max_weight, out bo
     }
     weight_index -= 2;
 
-    if ((mode_layout != 9) && (mode & 0x200) != 0) {
+    if ((mode_layout != 9) && ((mode & 0x200) != 0)) {
         const int max_weights[6] = int[6](9, 11, 15, 19, 23, 31);
-        max_weight = max_weights[weight_index];
+        params.max_weight = max_weights[weight_index];
     }
     else {
         const int max_weights[6] = int[6](1, 2, 3, 4, 5, 7);
-        max_weight = max_weights[weight_index];
+        params.max_weight = max_weights[weight_index];
     }
+
+    return params;
 }
 
 
 void FillError(ivec3 coord) {
-    // // imageStore(dest_image, coord.xy, vec4(1.0, 1.0, 0.0, 1.0));
+    for (uint j = 3; j < 6; j++) {
+        for (uint i = 3; i < 6; i++) {
+            imageStore(dest_image, coord.xy + ivec2(i,j), vec4(1.0, 1.0, 0.0, 1.0));
+        }
+    }
+    return;
 }
 
 void FillVoidExtentLDR(ivec3 coord, uint block_index) {
@@ -1208,44 +1258,42 @@ void FillVoidExtentLDR(ivec3 coord, uint block_index) {
     uint b = StreamBits(16);
     uint a = StreamBits(16);
 
-    for (uint j = 0; j < 4; j++) {
-        for (uint i = 0; i < 4; i++) {
-            //// // imageStore(dest_image, coord.xy + ivec2(i,j) , vec4((r >> 8), (g & 0xFF00) , (b & 0xFF00) << 8, (a & 0xFF00) << 16));
-            // // imageStore(dest_image, coord.xy + ivec2(i,j) , vec4(1));
+    for (uint j = 0; j < 6; j++) {
+        for (uint i = 0; i < 6; i++) {
+            // imageStore(dest_image, coord.xy + ivec2(i,j) , vec4((r >> 8), (g & 0xFF00) , (b & 0xFF00) << 8, (a & 0xFF00) << 16));
+            // imageStore(dest_image, coord.xy + ivec2(i,j) , vec4(1));
+            imageStore(dest_image, coord.xy + ivec2(i,j) , vec4(1, 0, 0.5, 1.0));
         }
     }
 }
 
 void DecompressBlock(ivec3 coord, uint block_index) {
-    uvec2 size;
-    int max_weight;
-    bool dual_plane;
-    switch (DecodeBlockInfo(block_index, size, max_weight, dual_plane)) {
-    case BLOCK_INFO_ERROR:
+    TexelWeightParams params;
+    params = DecodeBlockInfo(block_index);
+    if (params.Error) {
         FillError(coord);
         return;
-    case BLOCK_INFO_VOID_EXTENT_HDR:
+    }
+    if (params.VoidExtentHDR) {
         // Not supported
         FillError(coord);
         return;
-    case BLOCK_INFO_VOID_EXTENT_LDR:
+    }
+    if (params.VoidExtentLDR) {
         FillVoidExtentLDR(coord, block_index);
         return;
-    case BLOCK_INFO_NORMAL:
-        // // imageStore(dest_image, coord.xy, vec4(0.0, 0.68, 0.0, 1.0));
-        break;
     }
     // // imageStore(dest_image, coord.xy, vec4(0.0, 0.0, 0.950, 1.0));
     // return;
     // Make sure we are inside the grid
-    if (size.x > BLOCK_SIZE_IN_TEXELS.x || size.y > BLOCK_SIZE_IN_TEXELS.y) {
+    if (params.size.x > BLOCK_SIZE_IN_TEXELS.x || params.size.y > BLOCK_SIZE_IN_TEXELS.y) {
         FillError(coord);
         return;
     }
-
+    // return;
     // uint first_word = 0xFFFF;
     uint num_partitions = StreamBits(2) + 1;
-    if (num_partitions > 4 || (num_partitions == 4 && dual_plane)) {
+    if (num_partitions > 4 || (num_partitions == 4 && params.dual_plane)) {
         // Dual plane mode is incompatible with four partition blocks
         FillError(coord);
         return;
@@ -1279,7 +1327,7 @@ void DecompressBlock(ivec3 coord, uint block_index) {
     uint base_mode = base_cem & 3;
 
     // Remaining bits are color endpoint data...
-    uint weight_bits = GetPackedBitSize(size, dual_plane, max_weight);
+    uint weight_bits = GetPackedBitSize(params.size, params.dual_plane, params.max_weight);
     uint remaining_bits = 128 - weight_bits - total_bitsread;
 
     if (weight_bits == 0x5a || remaining_bits == 0x15){
@@ -1312,7 +1360,7 @@ void DecompressBlock(ivec3 coord, uint block_index) {
     
     // Do we have a dual plane situation?
     uint plane_selector_bits = 0;
-    if (dual_plane) {
+    if (params.dual_plane) {
         plane_selector_bits = 2;
     }
     remaining_bits -= plane_selector_bits;
@@ -1380,7 +1428,7 @@ void DecompressBlock(ivec3 coord, uint block_index) {
      } 
 
     // Make sure everything up till here is sane.
-    vec4 out_col;
+    vec4 out_col = vec4(0.0);
     for (uint i = 0; i < num_partitions; i++) {
         if (color_endpoint_mode[i] >= 16) {
             out_col = vec4(1.0);
@@ -1390,13 +1438,14 @@ void DecompressBlock(ivec3 coord, uint block_index) {
         }
     }
 
-    if(GetPackedBitSize(size, dual_plane, max_weight) + total_bitsread != 128) {
-        out_col = vec4(1.0);
+    if (GetPackedBitSize(params.size, params.dual_plane, params.max_weight) + total_bitsread != 128) {
+        // out_col = vec4(1.0);
+        out_col = vec4(1.0, 0, 0.5, 1.0);
     }
 
     for (uint j = 0; j < 4; j++) {
         for (uint i = 0; i < 4; i++) {
-            // // imageStore(dest_image, coord.xy + ivec2(i,j) , out_col);
+            imageStore(dest_image, coord.xy + ivec2(i,j) , out_col);
         }
     }
 
@@ -1421,7 +1470,6 @@ void DecompressBlock(ivec3 coord, uint block_index) {
     for (uint i = 0; i < 8; i++) {
 // Taken from http://graphics.stanford.edu/~seander/bithacks.html#ReverseByteWith32Bits
 #define REVERSE_BYTE(b) ( (b * 0x0802U & 0x22110U) | (b * 0x8020U & 0x88440U)) * 0x10101U >> 16
-//#define REVERSE_BYTE(b) ((uint(b)*0x80200802) & 0x0884422110) * 0x0101010101 >> 32
         uint a = REVERSE_BYTE(texel_weight_data[i]);
         uint b = REVERSE_BYTE(texel_weight_data[15 - i]);
 #undef REVERSE_BYTE
@@ -1432,10 +1480,10 @@ void DecompressBlock(ivec3 coord, uint block_index) {
 
     
     // Make sure that higher non-texel bits are set to zero
-    uint clear_byte_start = (GetPackedBitSize(size, dual_plane, max_weight) >> 3) + 1;
+    uint clear_byte_start = (GetPackedBitSize(params.size, params.dual_plane, params.max_weight) >> 3) + 1;
     texel_weight_data[clear_byte_start - 1] =
         texel_weight_data[clear_byte_start - 1] &
-        uint8_t(((1 << (GetPackedBitSize(size, dual_plane, max_weight) % 8)) - 1));
+        uint8_t(((1 << (GetPackedBitSize(params.size, params.dual_plane, params.max_weight) % 8)) - 1));
     
 
     //memset(texelWeightData + clearByteStart, 0, 16 - clearByteStart);
@@ -1444,19 +1492,40 @@ void DecompressBlock(ivec3 coord, uint block_index) {
     }
 
     texel_flag = true;  // use texel "vector" and bit stream in integer decoding
-    DecodeIntegerSequence(max_weight, GetNumWeightValues(size, dual_plane));
+    DecodeIntegerSequence(params.max_weight, GetNumWeightValues(params.size, params.dual_plane));
     
-    if (texel_vector_index == 0x12 && texel_vector[9].bit_value == 0xf && texel_vector[10].bit_value == 0x14) {
-        for (uint j = 0; j < 4; j++) {
-            for (uint i = 0; i < 4; i++) {
-                // // imageStore(dest_image, ivec2(6,0) + ivec2(i,j) , vec4(1,0,1, 1));
-            }
-        }
-    }
+    // if (total_texel_bitsread == 54) {
+    //     for (uint j = 0; j < 4; j++) {
+    //         for (uint i = 0; i < 4; i++) {
+    //             imageStore(dest_image, ivec2(60,20) + ivec2(i,j) , vec4(1,0,1, 1));
+    //         }
+    //     }
+    // }
+    // if (total_texel_bitsread > 54) {
+    //     for (uint j = 0; j < 4; j++) {
+    //         for (uint i = 0; i < 4; i++) {
+    //             imageStore(dest_image, ivec2(60,20) + ivec2(i,j) , vec4(1,0,0, 1));
+    //         }
+    //     }
+    // }
+    // if (total_texel_bitsread < 54) {
+    //     for (uint j = 0; j < 4; j++) {
+    //         for (uint i = 0; i < 4; i++) {
+    //             imageStore(dest_image, ivec2(60,20) + ivec2(i,j) , vec4(0,1,0, 1));
+    //         }
+    //     }
+    // }
+    // if (total_color_bitsread == 44) {
+    //     for (uint j = 0; j < 4; j++) {
+    //         for (uint i = 0; i < 4; i++) {
+    //             imageStore(dest_image, ivec2(80,25) + ivec2(i,j) , vec4(1,1,1, 1));
+    //         }
+    //     }
+    // }
     // return;
 
     uint weights[2][144];
-    UnquantizeTexelWeights(weights, dual_plane, size, 6, 6);
+    UnquantizeTexelWeights(weights, params.dual_plane, params.size, 6, 6);
     uint blockHeight = 6;
     uint blockWidth = 6;
     // Now that we have endpoints and weights, we can s32erpolate and generate
@@ -1481,7 +1550,7 @@ void DecompressBlock(ivec3 coord, uint block_index) {
                 }
             
                 uint plane = 0;
-                if (dual_plane && (((plane_index + 1) & 3) == c)) {
+                if (params.dual_plane && (((plane_index + 1) & 3) == c)) {
                     plane = 1;
                 }
             
@@ -1518,12 +1587,14 @@ void DecompressBlock(ivec3 coord, uint block_index) {
 }
 
 void main() {
-    ivec3 coord = ivec3(gl_GlobalInvocationID) * BLOCK_SIZE_IN_TEXELS;
+    ivec3 coord = ivec3(gl_GlobalInvocationID * BLOCK_SIZE_IN_TEXELS);
     uint img_area = image_size.x * image_size.y;
     uint block_index =
         gl_GlobalInvocationID.z * num_image_blocks.x * num_image_blocks.y +
         gl_GlobalInvocationID.y * num_image_blocks.x +
         gl_GlobalInvocationID.x;
+    if (block_index == 6 && block_index < 2)
+        return;
     current_index = 0;
     bitsread = 0;
     if (block_index >= 2048) {
@@ -1533,5 +1604,10 @@ void main() {
         local_buff[i] = astc_data[block_index * BLOCK_SIZE_IN_BYTES + i];
         // local_buff[i] = uint8_t(1);
     }
+    // uint Q = 26;
+    // if (BitsOp(Q, 0, 4) != 23) {
+    //     imageStore(dest_image, coord.xy + ivec2(20,20) , vec4(255,0,0,255));
+    // }
+
     DecompressBlock(coord, block_index);
 }

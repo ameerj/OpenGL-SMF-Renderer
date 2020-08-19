@@ -224,6 +224,10 @@ static void DecodeQus32Block(InputBitStream& bits, IntegerEncodedVector& result,
     Q |= bits.ReadBits<2>() << 5;
 
     Bits<u32> Qb(Q);
+    
+    //printf("Q: %u Q(0,4): %u  ~Q[0]: %u \n", Q, Qb(0, 4), ~Qb[0]);
+
+
     if (Qb(1, 2) == 3 && Qb(5, 6) == 0) {
         q[0] = q[1] = 4;
         q[2] = (Qb[0] << 2) | ((Qb[4] & ~Qb[0]) << 1) | (Qb[3] & ~Qb[0]);
@@ -246,6 +250,7 @@ static void DecodeQus32Block(InputBitStream& bits, IntegerEncodedVector& result,
             q[0] = Cb(0, 2);
         }
     }
+
 
     for (std::size_t i = 0; i < 3; ++i) {
         IntegerEncodedValue& val = result.emplace_back(IntegerEncoding::Qus32, nBitsPerValue);
@@ -823,6 +828,8 @@ static void DecodeColorValues(u32* out, u8* data, const u32* modes, const u32 nP
 
     InputBitStream colorStream(data);
     DecodeIntegerSequence(decodedColorValues, colorStream, range, nValues);
+
+    //printf("Color numread: %ul\n", colorStream.GetBitsRead());
 
     // Once we have the decoded values, we need to dequantize them to the 0-255 range
     // This procedure is outlined in ASTC spec C.2.13
@@ -1426,7 +1433,7 @@ static void DecompressBlock(const u8 inBuf[16], const u32 blockWidth, const u32 
         FillError(outBuf, blockWidth, blockHeight);
         return;
     }
-
+    printf("%u x %u \n", weightParams.m_Height, weightParams.m_Width);
     // Read num partitions
     u32 nPartitions = strm.ReadBits<2>() + 1;
     assert(nPartitions <= 4);
@@ -1594,6 +1601,8 @@ static void DecompressBlock(const u8 inBuf[16], const u32 blockWidth, const u32 
     DecodeIntegerSequence(texelWeightValues, weightStream, weightParams.m_MaxWeight,
                           weightParams.GetNumWeightValues());
 
+    // printf("Texel numread: %ul\n", weightStream.GetBitsRead());
+
     // Blocks can be at most 12x12, so we can have as many as 144 weights
     u32 weights[2][144];
     UnquantizeTexelWeights(weights, texelWeightValues, weightParams, blockWidth, blockHeight);
@@ -1660,9 +1669,9 @@ std::vector<u8> Decompress(const uint8_t * data, uint32_t width, uint32_t height
     for (u32 k = 0; k < depth; k++) {
         for (u32 j = 0; j < height; j += block_height) {
             for (u32 i = 0; i < width; i += block_width) {
-
+                // printf("BLOCK INDEX %u\n", blockIdx);
                 const u8* blockPtr = data + blockIdx * 16;
-                if (blockIdx <= 1) {
+                if (blockIdx <= 6 || blockIdx >= 6) {
                     // Blocks can be at most 12x12
                     u32 uncompData[144];
                     ASTCC::DecompressBlock(blockPtr, block_width, block_height, uncompData);
@@ -1681,7 +1690,7 @@ std::vector<u8> Decompress(const uint8_t * data, uint32_t width, uint32_t height
         depth_offset += height * width * 4;
     }
     // if (height * width == 0x10000) {
-    //     stbi_write_png("output.png", width, height, 4, outData.data(), height * 4);
+    //    stbi_write_png("output.png", width, height, 4, outData.data(), height * 4);
     // }
     return outData;
 }

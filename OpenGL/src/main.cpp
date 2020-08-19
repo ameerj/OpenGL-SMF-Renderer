@@ -178,8 +178,9 @@ int main(void){
 		Shader c_shader("res/shaders/compute.comp");
 		c_shader.Bind();
 		c_shader.SetUniform3u("image_size", 256, 256, 1);
-		c_shader.SetUniform2u("num_image_blocks", 256/6 + 1, 256/6);
-		GLFunc(glDispatchCompute((GLuint)256/6 , (GLuint)256/6, 1));
+		int num_blocks = static_cast<int>(std::ceil(256.0f / 6.0f));
+		c_shader.SetUniform2u("num_image_blocks", num_blocks, num_blocks);
+		GLFunc(glDispatchCompute((GLuint)num_blocks, (GLuint)num_blocks, 1));
 
 		// make sure writing to image has finished before read
 		GLFunc(glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT));
@@ -210,7 +211,7 @@ int main(void){
 
 		IndexBuffer ib(indices, 6);
 
-		glm::mat4 proj = glm::ortho(-1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f);
+		glm::mat4 proj = glm::ortho(-1.0f, 1.0f, 1.0f, -1.0f, -1.0f, 1.0f);
 		glm::mat4 view = glm::translate(glm::mat4(1.0f), glm::vec3(0, 0, 0));
 		glm::vec3 translationA = glm::vec3(0, 0, 0);
 		//glm::vec3 translationB = glm::vec3(400, 200, 0);
@@ -220,10 +221,6 @@ int main(void){
 		//shader.SetUniform4f("u_Color", 0.2f, 0.3f, 0.7f, 1.0f);
 
 		Renderer renderer;
-		// ImGui::CreateContext();
-		// ImGui_ImplGlfwGL3_Init(window, true);
-		// Setup style
-		// ImGui::StyleColorsDark();
 
 		//Texture texture("res/textures/icon.png");
 		// Texture texture("out.png");
@@ -233,37 +230,22 @@ int main(void){
 		float increment = 0.005f;
 		while (!glfwWindowShouldClose(window)) {
 			renderer.Clear();
-			// ImGui_ImplGlfwGL3_NewFrame();
 			shader.Bind();
 			
 			// object A
 			glm::mat4 model = glm::translate(glm::mat4(1.0f), translationA);
 			glm::mat4 mvp = proj * view * model;
-			shader.SetUniform4f("u_Color", r, 0.3f, 1.0f, 1.0f);
+			// shader.SetUniform4f("u_Color", r, 0.3f, 1.0f, 1.0f);
 			shader.SetUniformMat4f("u_MVP", mvp);
 
 			renderer.Draw(va, ib, shader);
 			
-			// object B
-			// model = glm::translate(glm::mat4(1.0f), translationB);
-			// mvp = proj * view * model;
-			// shader.SetUniform4f("u_Color", 0.0, r, 0.7f, 1.0f);
-			// shader.SetUniformMat4f("u_MVP", mvp);
-
-			// renderer.Draw(va, ib, shader);
 
 			if (r > 1.0f)
 				increment = -0.005f;
 			else if (r < 0.3f)
 				increment = 0.005f;
 			r += increment;
-			// {
-			// 	ImGui::SliderFloat3("Translation", &translationA.x, 0.0f, 960.0f);
-			// 	//ImGui::SliderFloat3("Translation B", &translationB.x, 0.0f, 960.0f);
-			// 	ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
-			// }
-			// ImGui::Render();
-			// ImGui_ImplGlfwGL3_RenderDrawData(ImGui::GetDrawData());
 
 			/* Swap front and back buffers */
 			glfwSwapBuffers(window);
@@ -271,8 +253,6 @@ int main(void){
 			glfwPollEvents();
 		}
 	}
-	// ImGui_ImplGlfwGL3_Shutdown();
-	// ImGui::DestroyContext();
 	glfwTerminate();
 	return 0;
 }
