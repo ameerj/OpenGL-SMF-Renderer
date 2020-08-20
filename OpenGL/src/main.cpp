@@ -107,11 +107,18 @@ int main(void){
 		std::cout << "Error: Glew did not init :(" << std::endl;
 
 
-	std::ifstream instream("res/textures/patterninput.astc", std::ios::in | std::ios::binary);
+	std::ifstream instream("res/textures/biggdog.astc", std::ios::in | std::ios::binary);
+	// std::ifstream instream("res/textures/patterninput.astc", std::ios::in | std::ios::binary);
 	std::vector<uint8_t> data((std::istreambuf_iterator<char>(instream)), std::istreambuf_iterator<char>());
 	std::vector<uint32_t> image;
 
-	std::vector<uint8_t> shit = Tegra::Texture::ASTC::Decompress(data.data(), 256, 256, 1, 6, 6);
+	u32 width, height, depth, block_width, block_height;
+
+	width = height = 256;
+	depth = 1;
+	block_height = block_width = 4;
+
+	std::vector<uint8_t> test = Tegra::Texture::ASTC::Decompress(data.data(), width, height, depth, block_width, block_height);
 	//InputBitStream stm(data.data()) ;
 	//u32 res = stm.ReadBits<32>();
 
@@ -161,7 +168,8 @@ int main(void){
 		GLFunc(glBufferData(GL_SHADER_STORAGE_BUFFER, EncodingsValues.size() * sizeof(IntegerEncodedValue), EncodingsValues.data(), GL_STATIC_COPY));
 		GLFunc(glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, ENC_ssbo));
 		GLFunc(glBindBuffer(GL_SHADER_STORAGE_BUFFER, ENC_ssbo)); // unbind
-
+		glEnable(GL_BLEND);
+		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 		// dimensions of the image
 		GLuint tex_output;
 		GLFunc(glGenTextures(1, &tex_output));
@@ -171,16 +179,18 @@ int main(void){
 		GLFunc(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE));
 		GLFunc(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR));
 		GLFunc(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR));
-		GLFunc(glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, 256, 256, 0, GL_RGBA, GL_FLOAT,
+		GLFunc(glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, width, height, 0, GL_RGBA, GL_FLOAT,
 			NULL));
 		GLFunc(glBindImageTexture(0, tex_output, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA32F));
 
 		Shader c_shader("res/shaders/compute.comp");
 		c_shader.Bind();
-		c_shader.SetUniform3u("image_size", 256, 256, 1);
-		int num_blocks = static_cast<int>(std::ceil(256.0f / 6.0f));
-		c_shader.SetUniform2u("num_image_blocks", num_blocks, num_blocks);
-		GLFunc(glDispatchCompute((GLuint)num_blocks, (GLuint)num_blocks, 1));
+		c_shader.SetUniform3u("image_size", (GLuint)width, (GLuint)height, 1);
+		int num_blocks_x = static_cast<int>(std::ceil(float(width) / float(block_width)));
+		int num_blocks_y = static_cast<int>(std::ceil(float(height) / float(block_height)));
+		c_shader.SetUniform2u("num_image_blocks", num_blocks_x, num_blocks_y);
+		c_shader.SetUniform2u("block_dims", block_width, block_height);
+		GLFunc(glDispatchCompute((GLuint)num_blocks_x, (GLuint)num_blocks_y, 1));
 
 		// make sure writing to image has finished before read
 		GLFunc(glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT));

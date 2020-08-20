@@ -540,6 +540,11 @@ static void FillVoidExtentLDR(InputBitStream& strm, u32* const outBuf, u32 block
     u16 a = static_cast<u16>(strm.ReadBits<16>());
     // // printf"Bits read after 4 reads: %ud\n", strm.GetBitsRead());
 
+    // r = 0x2100;
+    // g = 0x3200;
+    // b = 0x6400;
+    // a = 0x5500;
+
     u32 rgba = (r >> 8) | (g & 0xFF00) | (static_cast<u32>(b) & 0xFF00) << 8 |
                (static_cast<u32>(a) & 0xFF00) << 16;
 
@@ -1433,7 +1438,7 @@ static void DecompressBlock(const u8 inBuf[16], const u32 blockWidth, const u32 
         FillError(outBuf, blockWidth, blockHeight);
         return;
     }
-    printf("%u x %u \n", weightParams.m_Height, weightParams.m_Width);
+    // printf("%u x %u \n", weightParams.m_Height, weightParams.m_Width);
     // Read num partitions
     u32 nPartitions = strm.ReadBits<2>() + 1;
     assert(nPartitions <= 4);
@@ -1643,8 +1648,8 @@ static void DecompressBlock(const u8 inBuf[16], const u32 blockWidth, const u32 
             }
             auto TABLE = MakeReplicateTable<u32, 8, 16>();
             // printf"TAble size: %u\n ", TABLE.size());
-            // printf"P components %x, %x, %x, %x\n", p.Component(0), p.Component(1), p.Component(2), p.Component(3));
-            // printf"P pack %x\n", p.Pack());
+            // printf("P components %x, %x, %x, %x\n", p.Component(0), p.Component(1), p.Component(2), p.Component(3));
+            // printf("P pack %x\n", p.Pack());
             outBuf[j * blockWidth + i] = p.Pack();
         }
     }
@@ -1669,9 +1674,11 @@ std::vector<u8> Decompress(const uint8_t * data, uint32_t width, uint32_t height
     for (u32 k = 0; k < depth; k++) {
         for (u32 j = 0; j < height; j += block_height) {
             for (u32 i = 0; i < width; i += block_width) {
-                // printf("BLOCK INDEX %u\n", blockIdx);
                 const u8* blockPtr = data + blockIdx * 16;
-                if (blockIdx <= 6 || blockIdx >= 6) {
+                //printf("BLOCK INDEX %u\n", blockIdx);
+
+                if (blockIdx <= 2205 && blockIdx >= 2205) {
+
                     // Blocks can be at most 12x12
                     u32 uncompData[144];
                     ASTCC::DecompressBlock(blockPtr, block_width, block_height, uncompData);
@@ -1690,7 +1697,7 @@ std::vector<u8> Decompress(const uint8_t * data, uint32_t width, uint32_t height
         depth_offset += height * width * 4;
     }
     // if (height * width == 0x10000) {
-    //    stbi_write_png("output.png", width, height, 4, outData.data(), height * 4);
+        stbi_write_png("dog2205.png", width, height, 4, outData.data(), height * 4);
     // }
     return outData;
 }

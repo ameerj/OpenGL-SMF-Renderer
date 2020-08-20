@@ -4,10 +4,12 @@
 #extension GL_NV_gpu_shader5 : enable
 
 
-layout(local_size_x = 6, local_size_y = 6, local_size_z = 1) in;
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 
-layout(location = 2) uniform uvec3 image_size;
 layout(location = 1) uniform uvec2 num_image_blocks;
+layout(location = 2) uniform uvec3 image_size;
+layout(location = 3) uniform uvec2 block_dims;
+
 
 //layout(binding = 0) uniform image2D dest_image;
 layout(rgba32f, binding = 0) uniform image2D dest_image;
@@ -47,7 +49,6 @@ layout(std430, binding = 3) readonly buffer  astc_img {
     uint8_t astc_data[];
 };
 
-const uvec3 BLOCK_SIZE_IN_TEXELS = ivec3(6, 6, 1);
 const int BLOCK_SIZE_IN_BYTES = 16;
 
 const int BLOCK_INFO_ERROR = 0;
@@ -424,7 +425,7 @@ void DecodeQuintBlock(uint num_bits) { // Value number of bits
    uint q[3];
    uint Q;
 
-   // Read the trit encoded block according to
+   // Read the quint encoded block according to
    // table C.2.15
    m[0] = StreamColorBits(num_bits);
    Q = StreamColorBits(3);
@@ -492,7 +493,8 @@ void DecodeTritBlock(uint num_bits) {
    //Bits<u32> Tb(T);
    if (BitsOp(T, 2, 4) == 7) {
        C = (BitsOp(T, 5, 7) << 2) | BitsOp(T, 0, 1);
-       t[4] = t[3] = 2;
+       t[4] = 2;
+       t[3] = 2;
    } else {
        C = BitsOp(T, 0, 4);
        if (BitsOp(T, 5, 6) == 3) {
@@ -587,7 +589,7 @@ void DecodeColorValues(out uint color_values[32], uvec4 modes, uint num_partitio
     }
     // We now have enough to decode our integer sequence.
     // InputBitStream colorStream(data);
-    DecodeIntegerSequence(range, num_values);   //DECODE IS GOOD!!??!!?
+    DecodeIntegerSequence(range, num_values);   
 
     // Once we have the decoded values, we need to dequantize them to the 0-255 range
     // This procedure is outlined in ASTC spec C.2.13
@@ -741,6 +743,7 @@ void BitTransferSigned(out int a, out int b) {
         a -= 0x40;
 }
 // Clamps the pixel to the range [0,255]
+// maybe uneeded
 void ClampByte(out uvec4 color) {
     for (uint i = 0; i < 4; i++) {
         color[i] = (color[i] < 0) ? 0 : ((color[i] > 255) ? 255 : color[i]);
@@ -961,9 +964,7 @@ uint UnquantizeTexelWeight(EncodingData val) {
 }
 
 void UnquantizeTexelWeights(out uint outbuffer[2][144], 
-                                   bool dual_plane, uvec2 size, 
-                                   uint blockWidth,
-                                   uint blockHeight) {
+                                   bool dual_plane, uvec2 size) {
     uint weight_idx = 0;
     uint unquantized[2][144];
     uint area = size.x * size.y;
@@ -986,21 +987,22 @@ void UnquantizeTexelWeights(out uint outbuffer[2][144],
     }
 
 
-    // if (unquantized[0][10] != 42) {
-    // for (uint j = 0; j < 4; j++) {
-    //     for (uint i = 0; i < 4; i++) {
-    //         // imageStore(dest_image, ivec2(weight_idx,12) + ivec2(i,j) , vec4(0.5,0.73,0.1,1));
+    // if (unquantized[0][6] != 64) {
+    //     for (uint j = 0; j < 4; j++) {
+    //         for (uint i = 0; i < 4; i++) {
+    //             imageStore(dest_image, ivec2(weight_idx,12) + ivec2(i,j) , vec4(0.5,0.73,0.1,1));
+    //         }
     //     }
-    // }}
+    // }
     // return;
     // Do infill if necessary (Section C.2.18) ...
-    uint Ds = (1024 + (blockWidth / 2)) / (blockWidth - 1);
-    uint Dt = (1024 + (blockHeight / 2)) / (blockHeight - 1);
+    uint Ds = (1024 + (block_dims.x / 2)) / (block_dims.x - 1);
+    uint Dt = (1024 + (block_dims.y / 2)) / (block_dims.y - 1);
 
     uint kPlaneScale = dual_plane ? 2 : 1;
     for (uint plane = 0; plane < kPlaneScale; plane++)
-        for (uint t = 0; t < blockHeight; t++)
-            for (uint s = 0; s < blockWidth; s++) {
+        for (uint t = 0; t < block_dims.y; t++)
+            for (uint s = 0; s < block_dims.x; s++) {
                 uint cs = Ds * s;
                 uint ct = Dt * t;
 
@@ -1070,7 +1072,7 @@ void UnquantizeTexelWeights(out uint outbuffer[2][144],
                     }
                     //return;
                 }
-                outbuffer[plane][t * blockWidth + s] =
+                outbuffer[plane][t * block_dims.x + s] =
                     (p00 * w00 + p01 * w01 + p10 * w10 + p11 * w11 + 8) >> 4;
             }
 }
@@ -1111,9 +1113,7 @@ TexelWeightParams DecodeBlockInfo(uint block_index) {
     TexelWeightParams params = TexelWeightParams(
         uvec2(0), false, 0, false, false, false
     );
-    // uint first_word = ReadWord(block_index, 0);
-    // uint mode = bitfieldExtract(first_word, 0, 11);
-    ivec3 coord = ivec3(gl_GlobalInvocationID * BLOCK_SIZE_IN_TEXELS);
+
     uint mode = StreamBits(11);
     // Void extent
     if ((mode & 0x1ff) == 0x1fc) {
@@ -1133,11 +1133,6 @@ TexelWeightParams DecodeBlockInfo(uint block_index) {
         params.Error = true;
         return params;
     }
-    // for (uint j = 0; j < 3; j++) {
-    //     for (uint i = 0; i < 3; i++) {
-    //         imageStore(dest_image, coord.xy + ivec2(i,j), vec4(1.0, 1.0, 0.0, 1.0));
-    //     }
-    // }
     // Check for more reserved modes
     if ((mode & 3) == 0 && (mode & 0x1c0) == 0x1c0) {
         params.Error = true;
@@ -1152,50 +1147,34 @@ TexelWeightParams DecodeBlockInfo(uint block_index) {
         A = (mode >> 5) & 0x3;
         B = (mode >> 7) & 0x3;
         params.size = uvec2(B + 4,  A + 2);
-        // size.x = bitfieldExtract(mode, 7, 2) + 4;
-        // size.y = bitfieldExtract(mode, 5, 2) + 2;
         break;
     case 1:
         A = (mode >> 5) & 0x3;
         B = (mode >> 7) & 0x3;
         params.size = uvec2(B + 8,  A + 2);
-        // size.x = bitfieldExtract(mode, 7, 2) + 8;
-        // size.y = bitfieldExtract(mode, 5, 2) + 2;
         break;
     case 2:
         A = (mode >> 5) & 0x3;
         B = (mode >> 7) & 0x3;
         params.size = uvec2(A + 2,  B + 8);
-        // size.x = bitfieldExtract(mode, 5, 2) + 2;
-        // size.y = bitfieldExtract(mode, 7, 2) + 8;
         break;
     case 3:
         A = (mode >> 5) & 0x3;
         B = (mode >> 7) & 0x1;
         params.size = uvec2(A + 2, B + 6);
-        // size.x = bitfieldExtract(mode, 5, 2) + 2;
-        // size.y = bitfieldExtract(mode, 7, 1) + 6;
         break;
     case 4:
         A = (mode >> 5) & 0x3;
         B = (mode >> 7) & 0x1;
         params.size = uvec2(B + 2,  A + 2);
-        // size.x = bitfieldExtract(mode, 7, 1) + 2;
-        // size.y = bitfieldExtract(mode, 5, 2) + 2;
         break;
     case 5:
         A = (mode >> 5) & 0x3;
-        // uint B = (mode >> 7) & 0x3;
         params.size = uvec2(12,  A + 2);
-        // size.x = 12;
-        // size.y = bitfieldExtract(mode, 5, 2) + 2;
         break;
     case 6:
         A = (mode >> 5) & 0x3;
-        // uint B = (mode >> 7) & 0x3;
         params.size = uvec2(A + 2, 12);
-        // size.x = bitfieldExtract(mode, 5, 2) + 2;
-        // size.y = 12;
         break;
     case 7:
         params.size = uvec2(6, 10);
@@ -1207,8 +1186,6 @@ TexelWeightParams DecodeBlockInfo(uint block_index) {
         A = (mode >> 5) & 0x3;
         B = (mode >> 9) & 0x3;
         params.size = uvec2(A + 6,  B + 6);
-        // size.x = bitfieldExtract(mode, 5, 2) + 6;
-        // size.y = bitfieldExtract(mode, 9, 2) + 6;
         break;
     default:
         params.Error = true;
@@ -1240,8 +1217,8 @@ TexelWeightParams DecodeBlockInfo(uint block_index) {
 
 
 void FillError(ivec3 coord) {
-    for (uint j = 3; j < 6; j++) {
-        for (uint i = 3; i < 6; i++) {
+    for (uint j = 0; j < block_dims.y; j++) {
+        for (uint i = 0; i < block_dims.x; i++) {
             imageStore(dest_image, coord.xy + ivec2(i,j), vec4(1.0, 1.0, 0.0, 1.0));
         }
     }
@@ -1253,16 +1230,20 @@ void FillVoidExtentLDR(ivec3 coord, uint block_index) {
         StreamBits(13);
     }
     // Decode the RGBA components and renormalize them to the range [0, 255]
-    uint r = StreamBits(16);
-    uint g = StreamBits(16);
-    uint b = StreamBits(16);
-    uint a = StreamBits(16);
+    uint r_u = (StreamBits(16) & 0xFF00) >> 8;
+    uint g_u = (StreamBits(16) & 0xFF00) >> 8;
+    uint b_u = (StreamBits(16) & 0xFF00) >> 8;
+    uint a_u = (StreamBits(16) & 0xFF00) >> 8;
 
-    for (uint j = 0; j < 6; j++) {
-        for (uint i = 0; i < 6; i++) {
-            // imageStore(dest_image, coord.xy + ivec2(i,j) , vec4((r >> 8), (g & 0xFF00) , (b & 0xFF00) << 8, (a & 0xFF00) << 16));
-            // imageStore(dest_image, coord.xy + ivec2(i,j) , vec4(1));
-            imageStore(dest_image, coord.xy + ivec2(i,j) , vec4(1, 0, 0.5, 1.0));
+    // Normalize to [0.0, 1.0]
+    float a = float(a_u) / 256.0f;
+    float r = float(r_u) / 256.0f;
+    float g = float(g_u) / 256.0f;
+    float b = float(b_u) / 256.0f;
+
+    for (uint j = 0; j < block_dims.y; j++) {
+        for (uint i = 0; i < block_dims.x; i++) {
+            imageStore(dest_image, coord.xy + ivec2(i,j) , vec4(r,g,b,a));
         }
     }
 }
@@ -1286,7 +1267,7 @@ void DecompressBlock(ivec3 coord, uint block_index) {
     // // imageStore(dest_image, coord.xy, vec4(0.0, 0.0, 0.950, 1.0));
     // return;
     // Make sure we are inside the grid
-    if (params.size.x > BLOCK_SIZE_IN_TEXELS.x || params.size.y > BLOCK_SIZE_IN_TEXELS.y) {
+    if (params.size.x > block_dims.x || params.size.y > block_dims.y) {
         FillError(coord);
         return;
     }
@@ -1297,13 +1278,6 @@ void DecompressBlock(ivec3 coord, uint block_index) {
         // Dual plane mode is incompatible with four partition blocks
         FillError(coord);
         return;
-    }
-    if (num_partitions == 1){
-    for (uint j = 0; j < 4; j++) {
-        for (uint i = 0; i < 4; i++) {
-            // // imageStore(dest_image, coord.xy + ivec2(i,j) , vec4(0.565, 0.933, 0.1565, 0.25));
-        }
-    }
     }
 
     // Determine partitions, partition index, and color endpoint modes
@@ -1330,13 +1304,6 @@ void DecompressBlock(ivec3 coord, uint block_index) {
     uint weight_bits = GetPackedBitSize(params.size, params.dual_plane, params.max_weight);
     uint remaining_bits = 128 - weight_bits - total_bitsread;
 
-    if (weight_bits == 0x5a || remaining_bits == 0x15){
-    for (uint j = 0; j < 4; j++) {
-        for (uint i = 0; i < 4; i++) {
-            // // imageStore(dest_image, coord.xy + ivec2(i,j) , vec4(1, 0,0, 0.25));
-        }
-    }
-    }
 
     // Consider extra bits prior to texel data...
     uint extra_cem_bits = 0;
@@ -1380,15 +1347,6 @@ void DecompressBlock(ivec3 coord, uint block_index) {
          //}
          remaining_bits -= nb;
     }
-         
-    if (color_endpoint_data[1] == uint8_t(0x8e)) {
-    for (uint j = 0; j < 4; j++) {
-        for (uint i = 0; i < 4; i++) {
-            // // imageStore(dest_image, coord.xy + ivec2(i,j) , vec4(1, 0.5,1, 1.0));
-        }
-    }
-    }
-    // return;
 
     // Read the plane selection bits
     plane_index = int(StreamBits(plane_selector_bits));
@@ -1414,7 +1372,7 @@ void DecompressBlock(ivec3 coord, uint block_index) {
     
         for (uint i = 0; i < num_partitions; i++) {
             color_endpoint_mode[i] = base_mode;
-            if ((C[i]) > 0) {
+            if ((C[i]) == 0) {
                 color_endpoint_mode[i] -= 1;
             }
             color_endpoint_mode[i] <<= 2;
@@ -1433,8 +1391,6 @@ void DecompressBlock(ivec3 coord, uint block_index) {
         if (color_endpoint_mode[i] >= 16) {
             out_col = vec4(1.0);
             break;  // ERROR
-        } else {
-            out_col = vec4(0.0,1.0,1.0,1.0);    // CYaN BLUE No Errors 
         }
     }
 
@@ -1443,23 +1399,45 @@ void DecompressBlock(ivec3 coord, uint block_index) {
         out_col = vec4(1.0, 0, 0.5, 1.0);
     }
 
-    for (uint j = 0; j < 4; j++) {
-        for (uint i = 0; i < 4; i++) {
+    for (uint j = 0; j < block_dims.y; j++) {
+        for (uint i = 0; i < block_dims.x; i++) {
             imageStore(dest_image, coord.xy + ivec2(i,j) , out_col);
         }
     }
+
+    // if (color_endpoint_mode[0] != 4 || color_endpoint_mode[1] != 5) {
+    //     for (uint j = 0; j < 4; j++) {
+    //         for (uint i = 0; i < 4; i++) {
+    //             imageStore(dest_image, ivec2(80,35) + ivec2(i,j) , vec4(0,1,1, 1));
+    //         }
+    //     }
+    // }
 
     // Decode both color data and texel weight data
     uint color_values[32]; // Four values, two endpoints, four maximum paritions
     DecodeColorValues(color_values, color_endpoint_mode, num_partitions, color_data_bits);
 
-
+    
+    // if (color_values[0] != 255 || color_values[6] != 107) {
+    //     for (uint j = 0; j < 4; j++) {
+    //         for (uint i = 0; i < 4; i++) {
+    //             imageStore(dest_image, ivec2(80,25) + ivec2(i,j) , vec4(1,1,1, 1));
+    //         }
+    //     }
+    // }
     // Pixel( a r g b depth)
     uvec4 endpoints[4][2];
     for (uint i = 0; i < num_partitions; i++) {
         ComputeEndpoints(endpoints[i][0], endpoints[i][1], color_values, color_endpoint_mode[i]);
     }
-
+    
+    // if (endpoints[1][0] == uvec4(53,255,255,255)) {
+    //     for (uint j = 0; j < 4; j++) {
+    //         for (uint i = 0; i < 4; i++) {
+    //             imageStore(dest_image, ivec2(100,60) + ivec2(i,j) , vec4(0,1,0.5, 1));
+    //         }
+    //     }
+    // }
     
     // Read the texel weight data..
     for (uint i = 0; i < 16; i++) {
@@ -1493,47 +1471,23 @@ void DecompressBlock(ivec3 coord, uint block_index) {
 
     texel_flag = true;  // use texel "vector" and bit stream in integer decoding
     DecodeIntegerSequence(params.max_weight, GetNumWeightValues(params.size, params.dual_plane));
-    
-    // if (total_texel_bitsread == 54) {
-    //     for (uint j = 0; j < 4; j++) {
-    //         for (uint i = 0; i < 4; i++) {
-    //             imageStore(dest_image, ivec2(60,20) + ivec2(i,j) , vec4(1,0,1, 1));
-    //         }
-    //     }
-    // }
-    // if (total_texel_bitsread > 54) {
-    //     for (uint j = 0; j < 4; j++) {
-    //         for (uint i = 0; i < 4; i++) {
-    //             imageStore(dest_image, ivec2(60,20) + ivec2(i,j) , vec4(1,0,0, 1));
-    //         }
-    //     }
-    // }
-    // if (total_texel_bitsread < 54) {
-    //     for (uint j = 0; j < 4; j++) {
-    //         for (uint i = 0; i < 4; i++) {
-    //             imageStore(dest_image, ivec2(60,20) + ivec2(i,j) , vec4(0,1,0, 1));
-    //         }
-    //     }
-    // }
-    // if (total_color_bitsread == 44) {
-    //     for (uint j = 0; j < 4; j++) {
-    //         for (uint i = 0; i < 4; i++) {
-    //             imageStore(dest_image, ivec2(80,25) + ivec2(i,j) , vec4(1,1,1, 1));
-    //         }
-    //     }
-    // }
-    // return;
 
     uint weights[2][144];
-    UnquantizeTexelWeights(weights, params.dual_plane, params.size, 6, 6);
-    uint blockHeight = 6;
-    uint blockWidth = 6;
-    // Now that we have endpoints and weights, we can s32erpolate and generate
+    UnquantizeTexelWeights(weights, params.dual_plane, params.size);
+    
+    // if (weights[0][6] == 59) {
+    //     for (uint j = 0; j < 4; j++) {
+    //         for (uint i = 0; i < 4; i++) {
+    //             imageStore(dest_image, ivec2(80,25) + ivec2(i,j) , vec4(1,0,0.5, 1));
+    //         }
+    //     }
+    // }
+    // Now that we have endpoints and weights, we can interpolate and generate
     // the proper decoding...
-    for (uint j = 0; j < blockHeight; j++) {
-        for (uint i = 0; i < blockWidth; i++) {
+    for (uint j = 0; j < block_dims.y; j++) {
+        for (uint i = 0; i < block_dims.x; i++) {
             uint local_partition = Select2DPartition(partition_index, i, j, num_partitions,
-                                                (blockHeight * blockWidth) < 32);
+                                                (block_dims.y * block_dims.x) < 32);
 
             vec4 p;
             for (uint c = 0; c < 4; c++) {
@@ -1541,25 +1495,13 @@ void DecompressBlock(ivec3 coord, uint block_index) {
                 C0 = ReplicateByteTo16(C0);
                 uint C1 = endpoints[local_partition][1][c];
                 C1 = ReplicateByteTo16(C1);
-                if (endpoints[local_partition][0][c] != 0xFF || endpoints[local_partition][1][c] != 0xFF) {
-                    // imageStore(dest_image, coord.xy + ivec2(i,j) , vec4(255,0,0,255));
-                }
-            
-                if (C0 != 0xFFFF || C1 != 0xFFFF) {
-                    // imageStore(dest_image, coord.xy + ivec2(i,j) , vec4(255,0,0,255));
-                }
             
                 uint plane = 0;
                 if (params.dual_plane && (((plane_index + 1) & 3) == c)) {
                     plane = 1;
                 }
             
-                uint weight = weights[plane][j * blockWidth + i];
-                if (weight == 0) {
-                    // // imageStore(dest_image, coord.xy + ivec2(i,j) , vec4(20*i,20*j,0,255));
-                } else {
-                    // // imageStore(dest_image, coord.xy + ivec2(i,j) , vec4(0,0,255,255));
-                }
+                uint weight = weights[plane][j * block_dims.x + i];
                 uint C = (C0 * (64 - weight) + C1 * weight + 32) / 64;
                 if (C == 65535) {
                     // p[c] = 255;
@@ -1570,44 +1512,29 @@ void DecompressBlock(ivec3 coord, uint block_index) {
                     // p[c] = uint(255.0 * (Cf / 65536.0) + 0.5);
                     p[c] = (Cf / 65536.0);
                 }
-                if (C != 0xFFFF) {
-                    // imageStore(dest_image, coord.xy + ivec2(i,j+50) , vec4(255,255,250,255));
-                }
             }
 
             // outBuf[j * blockWidth + i] = p.Pack();
 
             imageStore(dest_image, coord.xy + ivec2(i,j) , p.gbar);
-            // imageStore(dest_image, coord.xy + ivec2(i,j) , p);
-            if (p.r != 0xFF && p.g != 0x83 && p.b != 0x83 && p.a != 0x83) {
-                // imageStore(dest_image, ivec2(i,j+100) , vec4(255,0,0,255));
-            }
+            //imageStore(dest_image, coord.xy + ivec2(i,j) , vec4(1.0,1.0,1.0, 0.05f));
         }
     }
 }
 
 void main() {
-    ivec3 coord = ivec3(gl_GlobalInvocationID * BLOCK_SIZE_IN_TEXELS);
-    uint img_area = image_size.x * image_size.y;
+    ivec3 coord = ivec3(gl_GlobalInvocationID * uvec3(block_dims, 1.0));
     uint block_index =
-        gl_GlobalInvocationID.z * num_image_blocks.x * num_image_blocks.y +
         gl_GlobalInvocationID.y * num_image_blocks.x +
         gl_GlobalInvocationID.x;
-    if (block_index == 6 && block_index < 2)
-        return;
+
     current_index = 0;
     bitsread = 0;
-    if (block_index >= 2048) {
+    if (block_index != 2205)
         return;
-    }
     for (int i = 0; i < 16; i++) {
         local_buff[i] = astc_data[block_index * BLOCK_SIZE_IN_BYTES + i];
-        // local_buff[i] = uint8_t(1);
     }
-    // uint Q = 26;
-    // if (BitsOp(Q, 0, 4) != 23) {
-    //     imageStore(dest_image, coord.xy + ivec2(20,20) , vec4(255,0,0,255));
-    // }
 
     DecompressBlock(coord, block_index);
 }
