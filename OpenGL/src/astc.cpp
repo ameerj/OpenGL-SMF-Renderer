@@ -1671,13 +1671,19 @@ std::vector<u8> Decompress(const uint8_t * data, uint32_t width, uint32_t height
     std::size_t depth_offset = 0;
     std::vector<u8> outData(height * width * depth * 4);
 
+    // int a = 30;
+    // int b = 200;
+    // printf("a: %x b : %x \n ", a, b);
+    // ASTCC::BitTransferSigned(a, b);
+    // printf("a: %x b : %x \n ", a, b);
+
     for (u32 k = 0; k < depth; k++) {
         for (u32 j = 0; j < height; j += block_height) {
             for (u32 i = 0; i < width; i += block_width) {
                 const u8* blockPtr = data + blockIdx * 16;
                 //printf("BLOCK INDEX %u\n", blockIdx);
 
-                if (blockIdx <= 2205 && blockIdx >= 2205) {
+                if (blockIdx <= 2702 && blockIdx >= 2702) {
 
                     // Blocks can be at most 12x12
                     u32 uncompData[144];
@@ -1697,7 +1703,7 @@ std::vector<u8> Decompress(const uint8_t * data, uint32_t width, uint32_t height
         depth_offset += height * width * 4;
     }
     // if (height * width == 0x10000) {
-        stbi_write_png("dog2205.png", width, height, 4, outData.data(), height * 4);
+    //    stbi_write_png("dog2205.png", width, height, 4, outData.data(), height * 4);
     // }
     return outData;
 }

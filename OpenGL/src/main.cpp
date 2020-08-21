@@ -107,8 +107,8 @@ int main(void){
 		std::cout << "Error: Glew did not init :(" << std::endl;
 
 
-	std::ifstream instream("res/textures/biggdog.astc", std::ios::in | std::ios::binary);
-	// std::ifstream instream("res/textures/patterninput.astc", std::ios::in | std::ios::binary);
+	// std::ifstream instream("res/textures/biggdog.astc", std::ios::in | std::ios::binary);
+	std::ifstream instream("res/textures/patterninput.astc", std::ios::in | std::ios::binary);
 	std::vector<uint8_t> data((std::istreambuf_iterator<char>(instream)), std::istreambuf_iterator<char>());
 	std::vector<uint32_t> image;
 
@@ -116,7 +116,7 @@ int main(void){
 
 	width = height = 256;
 	depth = 1;
-	block_height = block_width = 4;
+	block_height = block_width = 6;
 
 	std::vector<uint8_t> test = Tegra::Texture::ASTC::Decompress(data.data(), width, height, depth, block_width, block_height);
 	//InputBitStream stm(data.data()) ;

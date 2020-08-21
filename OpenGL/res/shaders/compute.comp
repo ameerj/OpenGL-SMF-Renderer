@@ -733,28 +733,36 @@ void DecodeColorValues(out uint color_values[32], uvec4 modes, uint num_partitio
     }
 }
 
+//    ivec2 ab = ivec2(129, 254);
+//    ivec2 ba = BitTransferSigned(ab);
+//    //if (ba[0] != 0 || ba[1] != 255)
+
 // Transfers a bit as described in C.2.14
-void BitTransferSigned(out int a, out int b) {
-    b >>= 1;
-    b |= a & 0x80;
-    a >>= 1;
-    a &= 0x3F;
-    if ((a & 0x20) != 0)
-        a -= 0x40;
+ivec2 BitTransferSigned(int a, int b) {
+    ivec2 transferred;
+    transferred[1] =  b >> 1;
+    transferred[1] |= a & 0x80;
+    transferred[0] =  a >> 1;
+    transferred[0] &= 0x3F;
+    if ((transferred[0] & 0x20) > 0) {
+        transferred[0] -= 0x40;
+    }
+    return transferred;
 }
+
 // Clamps the pixel to the range [0,255]
-// maybe uneeded
-void ClampByte(out uvec4 color) {
+uvec4 ClampByte(ivec4 color) {
     for (uint i = 0; i < 4; i++) {
         color[i] = (color[i] < 0) ? 0 : ((color[i] > 255) ? 255 : color[i]);
     }
+    return uvec4(color);
 }
 
 
 // Adds more precision to the blue channel as described
 // in C.2.14
-uvec4 BlueContract(uint a, uint r, uint g, uint b) {
-    return uvec4(a, (r + b) >> 1, (g + b) >> 1, b);
+ivec4 BlueContract(int a, int r, int g, int b) {
+    return ivec4(a, (r + b) >> 1, (g + b) >> 1, b);
 }
 
 
@@ -789,12 +797,16 @@ void ComputeEndpoints(out uvec4 ep1, out uvec4 ep2, uint color_values[32],
 
     case 5: {
         READ_INT_VALUES(4)
-        BitTransferSigned(v[1], v[0]);
-        BitTransferSigned(v[3], v[2]);
-        ep1 = uvec4(v[2], v[0], v[0], v[0]);
-        ep2 = uvec4(v[2] + v[3], v[0] + v[1], v[0] + v[1], v[0] + v[1]);
-        ClampByte(ep1);
-        ClampByte(ep1);
+        ivec2 transferred = BitTransferSigned(v[1], v[0]);
+        v[1] = transferred[0];
+        v[0] = transferred[1];
+        transferred = BitTransferSigned(v[3], v[2]);
+        v[3] = transferred[0];
+        v[2] = transferred[1];
+        ep1 = ClampByte(ivec4(v[2], v[0], v[0], v[0]));
+        ep2 = ClampByte(ivec4((v[2] + v[3]), v[0] + v[1], v[0] + v[1], v[0] + v[1]));
+        // ClampByte(ep1);
+        // ClampByte(ep1);
     } break;
 
     case 6: {
@@ -809,25 +821,31 @@ void ComputeEndpoints(out uvec4 ep1, out uvec4 ep2, uint color_values[32],
             ep1 = uvec4(0xFF, v[0], v[2], v[4]);
             ep2 = uvec4(0xFF, v[1], v[3], v[5]);
         } else {
-            ep1 = BlueContract(0xFF, v[1], v[3], v[5]);
-            ep2 = BlueContract(0xFF, v[0], v[2], v[4]);
+            ep1 = uvec4(BlueContract(0xFF, int(v[1]), int(v[3]), int(v[5])));
+            ep2 = uvec4(BlueContract(0xFF, int(v[0]), int(v[2]), int(v[4])));
         }
     } break;
 
     case 9: {
         READ_INT_VALUES(6)
-        BitTransferSigned(v[1], v[0]);
-        BitTransferSigned(v[3], v[2]);
-        BitTransferSigned(v[5], v[4]);
+        ivec2 transferred = BitTransferSigned(v[1], v[0]);
+        v[1] = transferred[0];
+        v[0] = transferred[1];
+        transferred = BitTransferSigned(v[3], v[2]);
+        v[3] = transferred[0];
+        v[2] = transferred[1];
+        transferred = BitTransferSigned(v[5], v[4]);
+        v[5] = transferred[0];
+        v[4] = transferred[1];
         if (v[1] + v[3] + v[5] >= 0) {
-            ep1 = uvec4(0xFF, v[0], v[2], v[4]);
-            ep2 = uvec4(0xFF, v[0] + v[1], v[2] + v[3], v[4] + v[5]);
+            ep1 = ClampByte(ivec4(0xFF, v[0], v[2], v[4]));
+            ep2 = ClampByte(ivec4(0xFF, v[0] + v[1], v[2] + v[3], v[4] + v[5]));
         } else {
-            ep1 = BlueContract(0xFF, v[0] + v[1], v[2] + v[3], v[4] + v[5]);
-            ep2 = BlueContract(0xFF, v[0], v[2], v[4]);
+            ep1 = ClampByte(BlueContract(0xFF, v[0] + v[1], v[2] + v[3], v[4] + v[5]));
+            ep2 = ClampByte(BlueContract(0xFF, v[0], v[2], v[4]));
         }
-        ClampByte(ep1);
-        ClampByte(ep2);
+        // ClampByte(ep1);
+        // ClampByte(ep2);
     } break;
 
     case 10: {
@@ -842,26 +860,37 @@ void ComputeEndpoints(out uvec4 ep1, out uvec4 ep2, uint color_values[32],
             ep1 = uvec4(v[6], v[0], v[2], v[4]);
             ep2 = uvec4(v[7], v[1], v[3], v[5]);
         } else {
-            ep1 = BlueContract(v[7], v[1], v[3], v[5]);
-            ep2 = BlueContract(v[6], v[0], v[2], v[4]);
+            ep1 = uvec4(BlueContract(int(v[7]), int(v[1]), int(v[3]), int(v[5])));
+            ep2 = uvec4(BlueContract(int(v[6]), int(v[0]), int(v[2]), int(v[4])));
         }
     } break;
 
     case 13: {
         READ_INT_VALUES(8)
-        BitTransferSigned(v[1], v[0]);
-        BitTransferSigned(v[3], v[2]);
-        BitTransferSigned(v[5], v[4]);
-        BitTransferSigned(v[7], v[6]);
+        ivec2 transferred = BitTransferSigned(v[1], v[0]);
+        v[1] = transferred[0];
+        v[0] = transferred[1];
+        transferred = BitTransferSigned(v[3], v[2]);
+        v[3] = transferred[0];
+        v[2] = transferred[1];
+
+        transferred = BitTransferSigned(v[5], v[4]);
+        v[5] = transferred[0];
+        v[4] = transferred[1];
+
+        transferred = BitTransferSigned(v[7], v[6]);
+        v[7] = transferred[0];
+        v[6] = transferred[1];
+
         if (v[1] + v[3] + v[5] >= 0) {
-            ep1 = uvec4(v[6], v[0], v[2], v[4]);
-            ep2 = uvec4(v[7] + v[6], v[0] + v[1], v[2] + v[3], v[4] + v[5]);
+            ep1 = ClampByte(ivec4(v[6], v[0], v[2], v[4]));
+            ep2 = ClampByte(ivec4(v[7] + v[6], v[0] + v[1], v[2] + v[3], v[4] + v[5]));
         } else {
-            ep1 = BlueContract(v[6] + v[7], v[0] + v[1], v[2] + v[3], v[4] + v[5]);
-            ep2 = BlueContract(v[6], v[0], v[2], v[4]);
+            ep1 = ClampByte(BlueContract(v[6] + v[7], v[0] + v[1], v[2] + v[3], v[4] + v[5]));
+            ep2 = ClampByte(BlueContract(v[6], v[0], v[2], v[4]));
         }
-        ClampByte(ep1);
-        ClampByte(ep2);
+        // ClampByte(ep1);
+        // ClampByte(ep2);
     } break;
 
     default:
@@ -1332,7 +1361,13 @@ void DecompressBlock(ivec3 coord, uint block_index) {
     }
     remaining_bits -= plane_selector_bits;
 
-
+    // if (plane_selector_bits != 0 || remaining_bits != 59 || extra_cem_bits != 2) {
+    //     for (uint j = 0; j < 4; j++) {
+    //         for (uint i = 0; i < 4; i++) {
+    //             imageStore(dest_image, ivec2(80,35) + ivec2(i,j) , vec4(0,1,1, 1));
+    //         }
+    //     }
+    // }
     
     // Read color data...
     uint color_data_bits = remaining_bits;
@@ -1399,13 +1434,13 @@ void DecompressBlock(ivec3 coord, uint block_index) {
         out_col = vec4(1.0, 0, 0.5, 1.0);
     }
 
-    for (uint j = 0; j < block_dims.y; j++) {
-        for (uint i = 0; i < block_dims.x; i++) {
-            imageStore(dest_image, coord.xy + ivec2(i,j) , out_col);
-        }
-    }
-
-    // if (color_endpoint_mode[0] != 4 || color_endpoint_mode[1] != 5) {
+    // for (uint j = 0; j < block_dims.y; j++) {
+    //     for (uint i = 0; i < block_dims.x; i++) {
+    //         imageStore(dest_image, coord.xy + ivec2(i,j) , out_col);
+    //     }
+    // }
+    // 
+    // if (color_endpoint_mode[0] != 5 || color_endpoint_mode[1] != 5) {
     //     for (uint j = 0; j < 4; j++) {
     //         for (uint i = 0; i < 4; i++) {
     //             imageStore(dest_image, ivec2(80,35) + ivec2(i,j) , vec4(0,1,1, 1));
@@ -1418,7 +1453,7 @@ void DecompressBlock(ivec3 coord, uint block_index) {
     DecodeColorValues(color_values, color_endpoint_mode, num_partitions, color_data_bits);
 
     
-    // if (color_values[0] != 255 || color_values[6] != 107) {
+    // if (color_values[0] != 254 || color_values[6] != 203 || color_values[2] != 121 || color_values[4] != 254) {
     //     for (uint j = 0; j < 4; j++) {
     //         for (uint i = 0; i < 4; i++) {
     //             imageStore(dest_image, ivec2(80,25) + ivec2(i,j) , vec4(1,1,1, 1));
@@ -1431,13 +1466,13 @@ void DecompressBlock(ivec3 coord, uint block_index) {
         ComputeEndpoints(endpoints[i][0], endpoints[i][1], color_values, color_endpoint_mode[i]);
     }
     
-    // if (endpoints[1][0] == uvec4(53,255,255,255)) {
-    //     for (uint j = 0; j < 4; j++) {
-    //         for (uint i = 0; i < 4; i++) {
-    //             imageStore(dest_image, ivec2(100,60) + ivec2(i,j) , vec4(0,1,0.5, 1));
-    //         }
-    //     }
-    // }
+    //if (endpoints[1][0] != uvec4(229,255,255,255) || endpoints[0][1] != uvec4(43,255,255,255)) {
+    //    for (uint j = 0; j < 4; j++) {
+    //        for (uint i = 0; i < 4; i++) {
+    //            imageStore(dest_image, ivec2(120,65) + ivec2(i,j) , vec4(0,1,0.5, 1));
+    //        }
+    //    }
+    //}
     
     // Read the texel weight data..
     for (uint i = 0; i < 16; i++) {
@@ -1471,14 +1506,22 @@ void DecompressBlock(ivec3 coord, uint block_index) {
 
     texel_flag = true;  // use texel "vector" and bit stream in integer decoding
     DecodeIntegerSequence(params.max_weight, GetNumWeightValues(params.size, params.dual_plane));
+    
+    // if (texel_vector[10].bit_value != 1 || texel_vector[10].quint_trit_value != 2) {
+    //     for (uint j = 0; j < 4; j++) {
+    //         for (uint i = 0; i < 4; i++) {
+    //             imageStore(dest_image, ivec2(120,25) + ivec2(i,j) , vec4(0,1,0.5, 1));
+    //         }
+    //     }
+    // }
 
     uint weights[2][144];
     UnquantizeTexelWeights(weights, params.dual_plane, params.size);
     
-    // if (weights[0][6] == 59) {
+    // if (weights[0][0] != 36 || weights[0][11] != 2) {
     //     for (uint j = 0; j < 4; j++) {
     //         for (uint i = 0; i < 4; i++) {
-    //             imageStore(dest_image, ivec2(80,25) + ivec2(i,j) , vec4(1,0,0.5, 1));
+    //             imageStore(dest_image, ivec2(100,25) + ivec2(i,j) , vec4(1,0,0.5, 1));
     //         }
     //     }
     // }
@@ -1530,11 +1573,16 @@ void main() {
 
     current_index = 0;
     bitsread = 0;
-    if (block_index != 2205)
-        return;
+    // if (block_index <= 2700 || block_index >= 2703)
+    //     return;
+    // if (block_index != 2702)
+    //     return;
     for (int i = 0; i < 16; i++) {
         local_buff[i] = astc_data[block_index * BLOCK_SIZE_IN_BYTES + i];
     }
-
+    ivec2 ab = ivec2(129, 254);
+    ivec2 ba = BitTransferSigned(ab[0], ab[1]);
+    //if (ba[0] != 0 || ba[1] != 255)
     DecompressBlock(coord, block_index);
+
 }
